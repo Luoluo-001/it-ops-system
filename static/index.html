@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IT运维事件管理系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部导航栏 -->
+        <header class="app-header">
+            <div class="header-left">
+                <span class="logo">🖥️ IT运维事件管理系统</span>
+            </div>
+            <div class="header-right">
+                <button class="icon-button" type="button" id="notification-btn" aria-label="查看通知">
+                    <span class="icon">🔔</span>
+                </button>
+                <div class="user-menu" id="user-menu">
+                    <button class="user-trigger" id="user-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">
+                        <span class="user-avatar-circle" id="header-avatar">A</span>
+                        <div class="user-meta">
+                            <span class="user-name" id="header-username">管理员</span>
+                            <span class="user-role" id="header-role">系统管理员</span>
+                        </div>
+                        <span class="user-chevron">⌄</span>
+                    </button>
+                    <div class="user-dropdown" id="user-dropdown" role="menu">
+                        <button class="dropdown-item" type="button">个人资料</button>
+                        <button class="dropdown-item" type="button" onclick="showPage('config')">系统配置</button>
+                        <div class="dropdown-divider"></div>
+                        <button class="dropdown-item danger" type="button" id="header-logout-btn">退出登录</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+
+        <div class="app-main">
+            <!-- 侧边栏 -->
+            <aside class="app-sidebar">
+                <nav class="sidebar-nav">
+                    <div class="nav-section">
+                        <div class="nav-section-title">主要</div>
+                        <a href="#" class="nav-item active" data-page="dashboard">
+                            <span class="nav-icon">📊</span>
+                            <span class="nav-text">事件管理概览</span>
+                        </a>
+                        <a href="#" class="nav-item" data-page="business-systems">
+                            <span class="nav-icon">🖥️</span>
+                            <span class="nav-text">业务系统管理</span>
+                        </a>
+                        <a href="#" class="nav-item" data-page="events">
+                            <span class="nav-icon">📋</span>
+                            <span class="nav-text">事件管理</span>
+                        </a>
+
+                        <a href="#" class="nav-item" data-page="plan-tasks">
+                            <span class="nav-icon">🗓️</span>
+                            <span class="nav-text">计划任务</span>
+                        </a>
+                        <a href="#" class="nav-item" data-page="users">
+                            <span class="nav-icon">👥</span>
+                            <span class="nav-text">用户管理</span>
+                        </a>
+
+                        <a href="#" class="nav-item" data-page="config">
+                            <span class="nav-icon">⚙️</span>
+                            <span class="nav-text">系统配置</span>
+                        </a>
+                    </div>
+                    <div class="nav-section">
+                        <div class="nav-section-title">帮助</div>
+                        <a href="#" class="nav-item" id="logout-btn">
+                            <span class="nav-icon">🚪</span>
+                            <span class="nav-text">退出登录</span>
+                        </a>
+                    </div>
+                </nav>
+            </aside>
+
+            <!-- 主内容区域 -->
+            <main class="app-content">
+                <!-- 事件管理概览页 -->
+                <div id="dashboard-page" class="page" style="display: none;">
+                    <div class="page-header">
+                        <h1 class="page-title">事件管理概览</h1>
+                        <p class="page-subtitle">实时监控统计数据和事件趋势分析</p>
+                    </div>
+
+                    <div class="dashboard-stats">
+                        <div class="stat-card">
+                            <div class="stat-icon" style="background: #1890ff;">📦</div>
+                            <div class="stat-info">
+                                <div class="stat-label">业务系统数量</div>
+                                <div class="stat-value" id="total-systems">0</div>
+                                <div class="stat-change positive">↑ 新增1个 +100%</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon" style="background: #ff7a45;">📊</div>
+                            <div class="stat-info">
+                                <div class="stat-label">事件总数</div>
+                                <div class="stat-value" id="total-events">0</div>
+                                <div class="stat-change positive">↑ 较上月 +33%</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon" style="background: #52c41a;">✅</div>
+                            <div class="stat-info">
+                                <div class="stat-label">已处理事件</div>
+                                <div class="stat-value" id="resolved-events">0</div>
+                                <div class="stat-change positive">↑ 新增2个 +66.67%</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon" style="background: #faad14;">⏱️</div>
+                            <div class="stat-info">
+                                <div class="stat-label">平均响应时间</div>
+                                <div class="stat-value" id="avg-response-time">0h</div>
+                                <div class="stat-change negative">↓ 较上月 -16%</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-charts">
+                        <div class="chart-container">
+                            <div class="chart-header">
+                                <h3>事件状态分类统计</h3>
+                                <div class="chart-actions">
+                                    <button class="btn-text" onclick="loadDashboardByPeriod('status', 'today')">今日</button>
+                                    <button class="btn-text" onclick="loadDashboardByPeriod('status', 'week')">本周</button>
+                                    <button class="btn-text active" onclick="loadDashboardByPeriod('status', 'month')">本月</button>
+                                </div>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="status-chart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="chart-container">
+                            <div class="chart-header">
+                                <h3>事件趋势分析统计</h3>
+                                <div class="chart-actions">
+                                    <button class="btn-text" onclick="loadTrendChart('today')">今日</button>
+                                    <button class="btn-text active" onclick="loadTrendChart('week')">本周</button>
+                                    <button class="btn-text" onclick="loadTrendChart('month')">本月</button>
+                                </div>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="trend-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-tables">
+                        <div class="table-container">
+                            <div class="table-header">
+                                <h3>最近事件列表</h3>
+                                <a href="#" class="btn-text" onclick="showPage('events'); return false;">查看全部</a>
+                            </div>
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>事件ID</th>
+                                        <th>系统名称</th>
+                                        <th>事件类型</th>
+                                        <th>严重程度</th>
+                                        <th>状态</th>
+                                        <th>创建时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recent-events-body">
+                                    <!-- 动态加载 -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="table-container">
+                            <div class="table-header">
+                                <h3>用户登录统计（最近7天）</h3>
+                            </div>
+                            <div class="login-stats" id="login-stats-container">
+                                <!-- 动态加载用户登录统计 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 业务系统管理页 -->
+                <div id="business-systems-page" class="page" style="display: none;">
+                    <div class="page-header">
+                        <h1 class="page-title">业务系统管理</h1>
+                        <p class="page-subtitle">管理和维护业务系统信息,包括主机、数据库、中间件等</p>
+                    </div>
+
+                    <div class="filter-bar">
+                        <div class="filter-left">
+                            <div class="search-box">
+                                <span class="search-icon">🔍</span>
+                                <input type="text" id="system-search" placeholder="请输入系统名称" />
+                            </div>
+                            <select id="system-status-filter" class="filter-select">
+                                <option value="">所有状态</option>
+                                <option value="运行中">运行中</option>
+                                <option value="维护中">维护中</option>
+                                <option value="已停用">已停用</option>
+                            </select>
+                        </div>
+                        <div class="filter-right">
+                            <button class="btn btn-primary" onclick="showSystemDialog()">+ 新增业务系统</button>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>系统名称</th>
+                                    <th>主机类型</th>
+                                    <th>IP地址</th>
+                                    <th>数据库</th>
+                                    <th>中间件</th>
+                                    <th>管理部室</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="systems-table-body">
+                                <!-- 动态加载 -->
+                            </tbody>
+                        </table>
+                        <div class="pagination">
+                            <span class="pagination-info">共计 <span id="systems-total">0</span> 条, 当前第 <span id="systems-page">1</span> - <span id="systems-per-page">10</span> 条</span>
+                            <div class="pagination-controls">
+                                <button class="btn-pagination" onclick="loadBusinessSystems(1)">1</button>
+                                <button class="btn-pagination">2</button>
+                                <button class="btn-pagination">3</button>
+                                <button class="btn-pagination">></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 事件管理页 -->
+                <div id="events-page" class="page">
+                    <div class="page-header">
+                        <h1 class="page-title">事件管理</h1>
+                        <p class="page-subtitle">查询和管理运维事件,记录故障处置流程</p>
+                    </div>
+
+                    <div class="dashboard-summary-grid">
+                        <div class="summary-card summary-primary">
+                            <div class="summary-icon">📊</div>
+                            <div>
+                                <div class="summary-label">总事件数</div>
+                                <div class="summary-value" id="stat-total-events">0</div>
+                                <div class="summary-trend" id="stat-total-events-trend">今日新增 0</div>
+                            </div>
+                        </div>
+                        <div class="summary-card summary-warning">
+                            <div class="summary-icon">⏳</div>
+                            <div>
+                                <div class="summary-label">待处理</div>
+                                <div class="summary-value" id="stat-pending-events">0</div>
+                                <div class="summary-trend" id="stat-pending-events-trend">占比 0%</div>
+                            </div>
+                        </div>
+                        <div class="summary-card summary-info">
+                            <div class="summary-icon">🚧</div>
+                            <div>
+                                <div class="summary-label">处理中</div>
+                                <div class="summary-value" id="stat-processing-events">0</div>
+                                <div class="summary-trend" id="stat-processing-events-trend">占比 0%</div>
+                            </div>
+                        </div>
+                        <div class="summary-card summary-success">
+                            <div class="summary-icon">✅</div>
+                            <div>
+                                <div class="summary-label">已解决</div>
+                                <div class="summary-value" id="stat-resolved-events">0</div>
+                                <div class="summary-trend" id="stat-resolved-events-trend">本周关闭 0</div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <div class="filter-section">
+
+                        <h3 class="filter-title">🔎 事件查询条件</h3>
+                        <div class="filter-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>系统名称</label>
+                                    <input type="text" id="event-system-name" placeholder="请输入系统名称" />
+                                </div>
+                                <div class="form-group">
+                                    <label>时间范围</label>
+                                    <div class="date-range">
+                                        <input type="date" id="event-start-date" />
+                                        <span>至</span>
+                                        <input type="date" id="event-end-date" />
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>事件类型</label>
+                                    <select id="event-type-filter">
+                                        <option value="">全部</option>
+                                        <option value="系统故障">系统故障</option>
+                                        <option value="性能问题">性能问题</option>
+                                        <option value="安全事件">安全事件</option>
+                                        <option value="变更请求">变更请求</option>
+                                        <option value="咨询问题">咨询问题</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>事件状态</label>
+                                    <select id="event-status-filter">
+                                        <option value="">全部</option>
+                                        <option value="待处理">待处理</option>
+                                        <option value="处理中">处理中</option>
+                                        <option value="已解决">已解决</option>
+                                        <option value="已关闭">已关闭</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>严重程度</label>
+                                    <select id="event-severity-filter">
+                                        <option value="">全部</option>
+                                        <option value="紧急">紧急</option>
+                                        <option value="严重">严重</option>
+                                        <option value="一般">一般</option>
+                                        <option value="较低">较低</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-actions">
+                                <button class="btn btn-primary" onclick="searchEvents()">查询</button>
+                                <button class="btn" onclick="resetEventFilters()">重置</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="events-section">
+                        <div class="section-header">
+                            <h3 class="section-title">📋 事件列表</h3>
+                            <button class="btn btn-primary" onclick="showEventDialog()">+ 新增事件</button>
+                        </div>
+
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>事件编号</th>
+                                    <th>业务系统</th>
+                                    <th>事件类型</th>
+                                    <th>严重程度</th>
+                                    <th>状态</th>
+                                    <th>发生时间</th>
+                                    <th>报告人</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="events-table-body">
+                                <!-- 动态加载 -->
+                            </tbody>
+                        </table>
+                        <div class="pagination">
+                            <span class="pagination-info">共 <span id="events-total">12</span> 条记录, 当前显示第 1-3 条</span>
+                            <div class="pagination-controls">
+                                <button class="btn-pagination">上一页</button>
+                                <button class="btn-pagination active">1</button>
+                                <button class="btn-pagination">2</button>
+                                <button class="btn-pagination">3</button>
+                                <button class="btn-pagination">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <div id="plan-tasks-page" class="page" style="display: none;">
+                    <div class="page-hero">
+                        <div>
+                            <h1 class="page-title">计划任务管理</h1>
+                            <p class="page-subtitle">统一登记计划任务、准备事项与提醒，保障按时执行</p>
+                        </div>
+                        <div class="hero-actions">
+                            <div class="plan-search">
+                                <span class="plan-search-icon">🔍</span>
+                                <input type="text" id="plan-task-keyword" placeholder="搜索任务名称、负责人..." />
+                                <button class="btn" onclick="loadPlanTasks(planTaskView)">搜索</button>
+                            </div>
+                            <button class="btn btn-primary" onclick="showPlanTaskDialog()">+ 新建任务</button>
+                        </div>
+
+                    </div>
+
+                    <div class="plan-tabs" id="plan-task-tabs">
+                        <button class="plan-tab active" data-view="all" onclick="switchPlanTaskTab('all')">全部任务</button>
+                        <button class="plan-tab" data-view="mine" onclick="switchPlanTaskTab('mine')">我的任务</button>
+                        <button class="plan-tab" data-view="created" onclick="switchPlanTaskTab('created')">我创建的</button>
+                    </div>
+
+                    <div class="plan-stats-grid">
+                        <div class="plan-stat-card plan-stat-primary">
+                            <div class="stat-icon">📊</div>
+                            <div>
+                                <div class="stat-label">总任务数</div>
+                                <div class="stat-value" id="plan-stat-total">0</div>
+                                <div class="stat-subtitle" id="plan-stat-total-desc">较上周 +0</div>
+                            </div>
+                        </div>
+                        <div class="plan-stat-card plan-stat-warning">
+                            <div class="stat-icon">⏳</div>
+                            <div>
+                                <div class="stat-label">待执行</div>
+                                <div class="stat-value" id="plan-stat-pending">0</div>
+                                <div class="stat-subtitle" id="plan-stat-pending-desc">计划准备中</div>
+                            </div>
+                        </div>
+                        <div class="plan-stat-card plan-stat-info">
+                            <div class="stat-icon">🚀</div>
+                            <div>
+                                <div class="stat-label">进行中</div>
+                                <div class="stat-value" id="plan-stat-running">0</div>
+                                <div class="stat-subtitle" id="plan-stat-running-desc">实时跟进</div>
+                            </div>
+                        </div>
+                        <div class="plan-stat-card plan-stat-success">
+                            <div class="stat-icon">✅</div>
+                            <div>
+                                <div class="stat-label">已完成</div>
+                                <div class="stat-value" id="plan-stat-finished">0</div>
+                                <div class="stat-subtitle" id="plan-stat-finished-desc">按时交付</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="plan-table-card">
+                        <div class="plan-table-header">
+                            <div class="plan-table-info">共 <span id="plan-task-total">0</span> 条任务</div>
+                            <div class="plan-table-filters">
+                                <select id="plan-task-status-filter">
+                                    <option value="">全部状态</option>
+                                    <option value="待执行">待执行</option>
+                                    <option value="进行中">进行中</option>
+                                    <option value="已完成">已完成</option>
+                                    <option value="已取消">已取消</option>
+                                </select>
+                                <select id="plan-task-type-filter">
+                                    <option value="">全部类型</option>
+                                    <option value="巡检类">巡检类</option>
+                                    <option value="备份类">备份类</option>
+                                    <option value="维护类">维护类</option>
+                                    <option value="更新类">更新类</option>
+                                    <option value="报告类">报告类</option>
+                                    <option value="其他">其他</option>
+                                </select>
+                                <select id="plan-task-per-page">
+                                    <option value="10">10条/页</option>
+                                    <option value="20">20条/页</option>
+                                    <option value="50">50条/页</option>
+                                </select>
+                                <button class="btn" onclick="loadPlanTasks(planTaskView)">应用筛选</button>
+                                <button class="btn btn-text" onclick="resetPlanTaskFilters()">重置</button>
+                            </div>
+                        </div>
+
+
+                        <div class="plan-table-wrapper">
+                            <table class="plan-task-table">
+                                <thead>
+                                    <tr>
+                                        <th>任务信息</th>
+                                        <th>计划时间</th>
+                                        <th>提醒配置</th>
+                                        <th>责任人</th>
+                                        <th>状态</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="plan-task-table-body">
+                                    <!-- 动态加载 -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="plan-table-pagination">
+                            <div id="plan-task-page-info">第 1/1 页 · 显示 0-0 / 0</div>
+                            <div class="plan-page-actions">
+                                <button class="btn btn-text" id="plan-task-page-prev" onclick="goPlanTaskPage('prev')">上一页</button>
+                                <button class="btn btn-text" id="plan-task-page-next" onclick="goPlanTaskPage('next')">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+
+                <!-- 用户管理页 -->
+
+                <div id="users-page" class="page" style="display: none;">
+                    <div class="page-header">
+                        <h1 class="page-title">用户管理</h1>
+                        <p class="page-subtitle">管理系统用户账号</p>
+                        <button class="btn btn-primary" onclick="showUserDialog()">+ 新增用户</button>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="users-table">
+                            <thead>
+                                <tr>
+                                    <th>用户名</th>
+                                    <th>真实姓名</th>
+                                    <th>角色</th>
+                                    <th>部门</th>
+                                    <th>联系电话</th>
+                                    <th>状态</th>
+                                    <th>最后登录</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-tbody"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="pagination" id="users-pagination"></div>
+                </div>
+
+                <!-- 系统配置页 -->
+                <div id="config-page" class="page" style="display: none;">
+                    <div class="page-header">
+                        <h1 class="page-title">系统配置</h1>
+                        <p class="page-subtitle">管理系统参数、事件类型、严重程度等配置项</p>
+                    </div>
+
+                    <div class="config-section">
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>管理部室配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('departments')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="departments-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>主机类型配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('host_types')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="host-types-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>中间件类型配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('middleware_types')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="middleware-types-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>数据库类型配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('database_types')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="database-types-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>系统状态配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('system_status')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="system-status-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>事件类型配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('event_types')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="event-types-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>严重程度配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('severity_levels')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="severity-levels-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>事件状态配置</h3>
+                                <button class="btn btn-sm" onclick="showConfigDialog('event_status')">+ 添加</button>
+                            </div>
+                            <div class="config-list" id="event-status-list"></div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-header">
+                                <h3>告警机器人配置</h3>
+                                <button class="btn btn-sm" onclick="showRobotConfigDialog()">+ 添加</button>
+                            </div>
+                            <div class="config-list robot-config-list" id="alert-robots-list"></div>
+                            <p class="config-hint">用于计划任务提醒，集中维护机器人名称与Webhook。</p>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- 业务系统对话框 -->
+
+    <div id="system-dialog" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="system-dialog-title">新增业务系统</h2>
+                <button class="modal-close" onclick="closeSystemDialog()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="system-form">
+                    <input type="hidden" id="system-id" />
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>系统名称 <span class="required">*</span></label>
+                            <input type="text" id="system-name" required />
+                        </div>
+                        <div class="form-group">
+                            <label>系统编码</label>
+                            <input type="text" id="system-code" placeholder="CORE-SYS" />
+                        </div>
+                    </div>
+                    
+                    <div class="form-section-title">主机信息</div>
+                    <div id="hosts-list">
+                        <!-- 动态添加主机 -->
+                    </div>
+                    <button type="button" class="btn btn-text" onclick="addHostRow()">+ 添加主机</button>
+                    
+                    <div class="form-section-title">数据库信息</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>数据库类型</label>
+                            <select id="system-database">
+                                <option value="">请选择</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>数据库版本</label>
+                            <input type="text" id="system-database-version" placeholder="12c" />
+                        </div>
+                    </div>
+                    
+                    <div class="form-section-title">中间件信息</div>
+                    <div id="middlewares-list">
+                        <!-- 动态添加中间件 -->
+                    </div>
+                    <button type="button" class="btn btn-text" onclick="addMiddlewareRow()">+ 添加中间件</button>
+                    
+                    <div class="form-section-title">管理信息</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>管理部室</label>
+                            <select id="system-department">
+                                <option value="">请选择</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>系统状态</label>
+                            <select id="system-status">
+                                <option value="运行中">运行中</option>
+                                <option value="维护中">维护中</option>
+                                <option value="已停用">已停用</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label>系统描述</label>
+                            <textarea id="system-description" rows="3" placeholder="核心业务系统,承载主要业务流程..."></textarea>
+                        </div>
+                    </div>
+                    <div class="form-section-title">联系信息</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>负责人</label>
+                            <input type="text" id="system-contact-person" placeholder="张三" />
+                        </div>
+                        <div class="form-group">
+                            <label>联系电话</label>
+                            <input type="text" id="system-contact-phone" placeholder="13800138000" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>电子邮箱</label>
+                            <input type="email" id="system-contact-email" placeholder="zhangsan@example.com" />
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeSystemDialog()">取消</button>
+                <button class="btn btn-primary" onclick="saveSystem()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 事件查看弹窗（只读） -->
+    <div id="event-view-dialog" class="modal">
+        <div class="modal-content modal-medium event-view-modal">
+            <div class="modal-header">
+                <h2 id="event-view-title">事件详情</h2>
+                <button class="modal-close" onclick="closeEventViewDialog()">×</button>
+            </div>
+            <div class="modal-body event-view-body" id="event-view-body">
+                <!-- 动态渲染 -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeEventViewDialog()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 事件对话框 -->
+    <div id="event-dialog" class="modal">
+
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="event-dialog-title">新增事件</h2>
+                <button class="modal-close" onclick="closeEventDialog()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="event-form">
+                    <input type="hidden" id="event-id" />
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>业务系统 <span class="required">*</span></label>
+                            <select id="event-system-id" required>
+                                <option value="">请选择业务系统</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>发生时间 <span class="required">*</span></label>
+                            <input type="datetime-local" id="event-occurred-at" required />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>事件类型 <span class="required">*</span></label>
+                            <select id="event-type" required>
+                                <option value="">请选择</option>
+                                <option value="系统故障">系统故障</option>
+                                <option value="性能问题">性能问题</option>
+                                <option value="安全事件">安全事件</option>
+                                <option value="变更请求">变更请求</option>
+                                <option value="咨询问题">咨询问题</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>故障分类</label>
+                            <input type="text" id="event-category" placeholder="数据库故障" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>严重程度 <span class="required">*</span></label>
+                            <select id="event-severity" required>
+                                <option value="">请选择</option>
+                                <option value="紧急">紧急</option>
+                                <option value="严重">严重</option>
+                                <option value="一般">一般</option>
+                                <option value="较低">较低</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>事件状态</label>
+                            <select id="event-status">
+                                <option value="待处理">待处理</option>
+                                <option value="处理中">处理中</option>
+                                <option value="已解决">已解决</option>
+                                <option value="已关闭">已关闭</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>报告人</label>
+                            <input type="text" id="event-reported-by" placeholder="张三" />
+                        </div>
+                        <div class="form-group">
+                            <label>处理人</label>
+                            <input type="text" id="event-assigned-to" placeholder="运维团队" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label>事件标题 <span class="required">*</span></label>
+                            <input type="text" id="event-title" placeholder="请简要描述事件" required />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label>事件描述</label>
+                            <textarea id="event-description" rows="3" placeholder="详细描述事件的现象、影响范围等..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-section-title">处置流程</div>
+                    <div id="process-list">
+                        <!-- 动态添加处置步骤 -->
+                    </div>
+                    <button type="button" class="btn btn-text" onclick="addProcessStep()">+ 添加处置步骤</button>
+
+                    <div class="form-section-title">进度结果</div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label>解决方案</label>
+                            <textarea id="event-resolution" rows="3" placeholder="描述如何解决该事件..."></textarea>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label>根本原因</label>
+                            <textarea id="event-root-cause" rows="2" placeholder="分析事件的根本原因..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-section-title">附件上传</div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <div class="upload-area" id="event-upload-area">
+                                <span class="upload-icon">☁️</span>
+                                <p>点击或拖拽文件到此区域上传</p>
+                                <p class="upload-hint">支持截图、文档等文件,单个文件不超过16MB</p>
+                                <input type="file" id="event-file-input" multiple style="display: none;" onchange="handleEventFileUpload(this.files)" />
+                            </div>
+                            <div id="event-file-list" class="file-list"></div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeEventDialog()">取消</button>
+                <button class="btn btn-primary" onclick="saveEvent()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 计划任务对话框 -->
+    <div id="plan-task-dialog" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="plan-task-dialog-title">新建计划任务</h2>
+                <button class="modal-close" onclick="closePlanTaskDialog()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="plan-task-form">
+                    <input type="hidden" id="plan-task-id" />
+                    <input type="hidden" id="plan-task-webhook-cache" />
+
+                    <div class="form-section-title">任务信息</div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>任务标题 <span class="required">*</span></label>
+                            <input type="text" id="plan-task-title" required />
+                        </div>
+                        <div class="form-group">
+                            <label>任务类型</label>
+                            <select id="plan-task-type">
+                                <option value="巡检类">巡检类</option>
+                                <option value="备份类">备份类</option>
+                                <option value="维护类">维护类</option>
+                                <option value="更新类">更新类</option>
+                                <option value="报告类">报告类</option>
+                                <option value="其他" selected>其他</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label>任务描述/目标</label>
+                            <textarea id="plan-task-description" rows="3" placeholder="描述任务目标、预期成果和注意事项..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-section-title">时间与周期</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>执行周期</label>
+                            <select id="plan-task-schedule-type">
+                                <option value="once">一次性</option>
+                                <option value="daily">每天</option>
+                                <option value="weekly">每周</option>
+                                <option value="monthly">每月</option>
+                                <option value="quarterly">每季度</option>
+                                <option value="yearly">每年</option>
+                                <option value="cron">自定义Cron</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>计划执行时间 <span class="required">*</span></label>
+                            <input type="datetime-local" id="plan-task-plan-time" required />
+                        </div>
+                    </div>
+                    <div class="form-row" id="plan-task-cron-row" style="display: none;">
+                        <div class="form-group full-width">
+                            <label>Cron表达式</label>
+                            <input type="text" id="plan-task-schedule-value" placeholder="0 30 9 * * ?" />
+                        </div>
+                    </div>
+
+                    <div class="form-section-title">角色与责任</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>责任人(逗号分隔)</label>
+                            <input type="text" id="plan-task-responsible" placeholder="张三,李四" />
+                        </div>
+                        <div class="form-group">
+                            <label>主负责人</label>
+                            <input type="text" id="plan-task-owner" placeholder="张三" />
+                        </div>
+                    </div>
+
+                    <div class="form-section-title">提醒设置</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>提前提醒</label>
+                            <div class="input-with-unit">
+                                <input type="number" id="plan-task-reminder" min="0" value="1440" />
+                                <span>分钟</span>
+                            </div>
+                            <div class="reminder-presets">
+                                <button type="button" class="reminder-pill" onclick="setReminderPreset(60)">1小时</button>
+                                <button type="button" class="reminder-pill" onclick="setReminderPreset(240)">4小时</button>
+                                <button type="button" class="reminder-pill" onclick="setReminderPreset(1440)">1天</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+
+                            <label>提醒开关</label>
+                            <label class="switch">
+                                <input type="checkbox" id="plan-task-reminder-enabled" checked />
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>告警机器人 <span class="form-hint-inline">到“系统配置 - 告警机器人”维护</span></label>
+                            <select id="plan-task-alert-robot">
+                                <option value="">不发送提醒</option>
+                            </select>
+                            <p class="form-hint">机器人名称与Webhook迁移到系统配置，任务只需选择使用哪个机器人。</p>
+                        </div>
+                        <div class="form-group">
+                            <label>提醒内容模板</label>
+                            <textarea id="plan-task-reminder-message" rows="3" placeholder="【计划任务提醒】任务：{title}\n时间：{plan_time}\n负责人：{owner}\n准备进度：{prep_progress}\n准备清单：{preparations}"></textarea>
+                            <p class="form-hint">可使用变量：{title}、{plan_time}、{owner}、{responsible}、{preparations}、{prep_progress}</p>
+
+                        </div>
+                    </div>
+
+                    <div class="form-section-title">准备事项</div>
+                    <div id="preparation-list" class="preparation-list"></div>
+                    <button type="button" class="btn btn-text" onclick="addPreparationItem()">+ 添加准备事项</button>
+                </form>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn" onclick="closePlanTaskDialog()">取消</button>
+                <button class="btn btn-primary" onclick="savePlanTask()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="plan-task-detail-dialog" class="modal">
+        <div class="modal-content modal-medium">
+            <div class="modal-header">
+                <h2 id="plan-task-detail-title">任务详情</h2>
+                <button class="modal-close" onclick="closePlanTaskDetail()">×</button>
+            </div>
+            <div class="modal-body" id="plan-task-detail-body">
+                <!-- 动态渲染 -->
+            </div>
+            <div class="modal-footer" id="plan-task-detail-footer"></div>
+        </div>
+    </div>
+
+    <div id="plan-task-status-dialog" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="plan-task-status-title">更新状态</h2>
+                <button class="modal-close" onclick="closeStatusDialog()">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="plan-status-hint" id="plan-task-status-hint">确认开始执行该计划任务。</p>
+                <div class="form-group" id="plan-task-result-wrapper">
+                    <label>执行结果</label>
+                    <select id="plan-task-result-status">
+                        <option value="成功">成功</option>
+                        <option value="部分成功">部分成功</option>
+                        <option value="失败">失败</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>说明/原因</label>
+                    <textarea id="plan-task-status-notes" rows="3" placeholder="补充本次执行的说明或取消原因"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeStatusDialog()">取消</button>
+                <button class="btn btn-primary" id="plan-task-status-submit" onclick="submitStatusDialog()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast提示 -->
+
+
+    <div id="toast" class="toast"></div>
+
+    <!-- 用户管理对话框 -->
+    <div id="user-dialog" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="user-dialog-title">新增用户</h2>
+                <button class="modal-close" onclick="closeUserDialog()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="user-form">
+                    <input type="hidden" id="user-id" />
+                    <div class="form-group">
+                        <label>用户名 <span class="required">*</span></label>
+                        <input type="text" id="user-username" required />
+                    </div>
+                    <div class="form-group">
+                        <label>真实姓名 <span class="required">*</span></label>
+                        <input type="text" id="user-realname" required />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>角色</label>
+                            <select id="user-role">
+                                <option value="user">普通用户</option>
+                                <option value="admin">管理员</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>部门</label>
+                            <input type="text" id="user-department" placeholder="请输入部门" />
+                        </div>
+
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>联系电话</label>
+                            <input type="tel" id="user-phone" />
+                        </div>
+                        <div class="form-group">
+                            <label>邮箱</label>
+                            <input type="email" id="user-email" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>密码 <span id="password-hint">(留空则不修改)</span></label>
+                        <input type="password" id="user-password" />
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="user-is-active" checked style="width: auto;" />
+                            <span>账号启用</span>
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeUserDialog()">取消</button>
+                <button class="btn btn-primary" onclick="saveUser()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 机器人配置对话框 -->
+    <div id="robot-config-dialog" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="robot-config-title">新增告警机器人</h2>
+                <button class="modal-close" onclick="closeRobotConfigDialog()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>机器人名称 <span class="required">*</span></label>
+                    <input type="text" id="robot-name" placeholder="如：机房保障群机器人" />
+                </div>
+                <div class="form-group">
+                    <label>Webhook <span class="required">*</span></label>
+                    <input type="text" id="robot-webhook" placeholder="https://oapi.dingtalk.com/robot/send?token=..." />
+                    <p class="form-hint">仅用于发送提醒，不在任务表单中重复填写。</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeRobotConfigDialog()">取消</button>
+                <button class="btn btn-primary" onclick="saveRobotConfig()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 配置项对话框 -->
+    <div id="config-dialog" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="config-dialog-title">添加配置项</h2>
+                <button class="modal-close" onclick="closeConfigDialog()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>配置项名称</label>
+                    <input type="text" id="config-item-value" placeholder="请输入配置项名称" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeConfigDialog()">取消</button>
+                <button class="btn btn-primary" onclick="saveConfigItem()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+
+    <script>
+        // 包装apiFetch添加401处理
+        const originalApiFetch = apiFetch;
+        window.apiFetch = async (url, options) => {
+            try {
+                const response = await originalApiFetch(url, options);
+                if (response.status === 401) {
+                    console.error('登录已过期');
+                    window.location.href = '/login.html';
+                    throw new Error('Unauthorized');
+                }
+                return response;
+            } catch (error) {
+                if (error.message === 'Unauthorized') throw error;
+                // 其他网络错误
+                console.error('API请求失败:', error);
+                throw error;
+            }
+        };
+    </script>
+</body>
+</html>
