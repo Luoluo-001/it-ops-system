@@ -27,11 +27,12 @@
                         <span class="user-chevron">⌄</span>
                     </button>
                     <div class="user-dropdown" id="user-dropdown" role="menu">
-                        <button class="dropdown-item" type="button">个人资料</button>
-                        <button class="dropdown-item" type="button" onclick="showPage('config')">系统配置</button>
+
+                        <button class="dropdown-item admin-only" type="button" onclick="showPage('config')">系统配置</button>
                         <div class="dropdown-divider"></div>
                         <button class="dropdown-item danger" type="button" id="header-logout-btn">退出登录</button>
                     </div>
+
                 </div>
             </div>
         </header>
@@ -60,15 +61,16 @@
                             <span class="nav-icon">🗓️</span>
                             <span class="nav-text">计划任务</span>
                         </a>
-                        <a href="#" class="nav-item" data-page="users">
+                        <a href="#" class="nav-item admin-only" data-page="users">
                             <span class="nav-icon">👥</span>
                             <span class="nav-text">用户管理</span>
                         </a>
 
-                        <a href="#" class="nav-item" data-page="config">
+                        <a href="#" class="nav-item admin-only" data-page="config">
                             <span class="nav-icon">⚙️</span>
                             <span class="nav-text">系统配置</span>
                         </a>
+
                     </div>
                     <div class="nav-section">
                         <div class="nav-section-title">帮助</div>
@@ -141,6 +143,15 @@
 
                         <div class="chart-container">
                             <div class="chart-header">
+                                <h3>计划任务执行统计</h3>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="plan-task-stat-chart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="chart-container">
+                            <div class="chart-header">
                                 <h3>事件趋势分析统计</h3>
                                 <div class="chart-actions">
                                     <button class="btn-text" onclick="loadTrendChart('today')">今日</button>
@@ -199,9 +210,10 @@
                         <div class="filter-left">
                             <div class="search-box">
                                 <span class="search-icon">🔍</span>
-                                <input type="text" id="system-search" placeholder="请输入系统名称" />
+                                <input type="text" id="system-search" placeholder="搜索系统名称 / IP地址" onkeypress="if(event.keyCode==13) loadBusinessSystems(1)" />
                             </div>
-                            <select id="system-status-filter" class="filter-select">
+                            <button class="btn btn-secondary" onclick="loadBusinessSystems(1)">查询</button>
+                            <select id="system-status-filter" class="filter-select" onchange="loadBusinessSystems(1)">
                                 <option value="">所有状态</option>
                                 <option value="运行中">运行中</option>
                                 <option value="维护中">维护中</option>
@@ -617,7 +629,25 @@
 
     <!-- 业务系统对话框 -->
 
+    <!-- 业务系统查看弹窗（只读） -->
+    <div id="system-view-dialog" class="modal">
+        <div class="modal-content modal-large event-view-modal">
+            <div class="modal-header">
+                <h2 id="system-view-title">业务系统详情</h2>
+                <button class="modal-close" onclick="closeSystemViewDialog()">×</button>
+            </div>
+            <div class="modal-body" id="system-view-body">
+                <!-- 动态渲染 -->
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn" onclick="closeSystemViewDialog()">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <div id="system-dialog" class="modal">
+
         <div class="modal-content modal-large">
             <div class="modal-header">
                 <h2 id="system-dialog-title">新增业务系统</h2>
@@ -955,11 +985,15 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label>告警机器人 <span class="form-hint-inline">到“系统配置 - 告警机器人”维护</span></label>
-                            <select id="plan-task-alert-robot">
-                                <option value="">不发送提醒</option>
-                            </select>
+                            <div style="display: flex; gap: 8px;">
+                                <select id="plan-task-alert-robot" style="flex: 1;">
+                                    <option value="">不发送提醒</option>
+                                </select>
+                                <button type="button" class="btn btn-sm" onclick="testPlanTaskNotification()" style="white-space: nowrap;">测试通知</button>
+                            </div>
                             <p class="form-hint">机器人名称与Webhook迁移到系统配置，任务只需选择使用哪个机器人。</p>
                         </div>
+
                         <div class="form-group">
                             <label>提醒内容模板</label>
                             <textarea id="plan-task-reminder-message" rows="3" placeholder="【计划任务提醒】任务：{title}\n时间：{plan_time}\n负责人：{owner}\n准备进度：{prep_progress}\n准备清单：{preparations}"></textarea>

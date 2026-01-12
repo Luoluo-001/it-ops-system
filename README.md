@@ -11,9 +11,11 @@
 - 🔐 **页面记忆**：刷新停留在当前菜单，登录成功默认进入“事件管理概览”
 
 ## 系统要求
-- Python 3.7+
+- Python 3.7+ (推荐 3.8+)
 - SQLite 3
 - 支持操作系统：Linux、macOS、Windows
+
+> **注意**：如果使用 Python 3.7，请确保使用 `requirements.txt` 中指定的兼容版本。Flask 3.0+ 需要 Python 3.8+。
 
 ## 快速开始
 ### Linux/macOS

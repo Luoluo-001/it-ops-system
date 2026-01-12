@@ -6,7 +6,10 @@ from sqlalchemy import inspect, text
 
 import os
 import threading
+import json
+import urllib.request
 from werkzeug.utils import secure_filename
+
 
 from werkzeug.security import generate_password_hash, check_password_hash
 import secrets
@@ -67,6 +70,10 @@ class SystemHost(db.Model):
     host_type = db.Column(db.String(50))  # 主机类型
     ip_address = db.Column(db.String(100))  # IP地址
     host_purpose = db.Column(db.String(200))  # 主机用途
+    os_version = db.Column(db.String(100))  # 操作系统版本
+    cpu_cores = db.Column(db.String(50))   # CPU核数
+    memory_gb = db.Column(db.String(50))   # 内存GB
+    disk_gb = db.Column(db.String(50))     # 磁盘GB
     created_at = db.Column(db.DateTime, default=datetime.now)
 
 class SystemMiddleware(db.Model):
@@ -167,6 +174,7 @@ class PlanTask(db.Model):
     plan_time = db.Column(db.DateTime, nullable=False)
     reminder_minutes = db.Column(db.Integer, default=1440)  # 提前提醒的分钟数
     reminder_enabled = db.Column(db.Boolean, default=True)
+    reminder_sent = db.Column(db.Boolean, default=False)
     alert_robot = db.Column(db.String(100), default='默认钉钉机器人')
     webhook_url = db.Column(db.String(500))
     reminder_message = db.Column(db.Text, default='【计划任务提醒】任务：{title}，计划时间：{plan_time}，负责人：{owner}。请提前准备：{preparations}')
@@ -184,6 +192,8 @@ class PlanTask(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     preparations = db.relationship('PlanTaskPreparation', backref='task', lazy=True, cascade='all, delete-orphan')
+
+
 
 class PlanTaskPreparation(db.Model):
     """任务准备事项"""
@@ -210,7 +220,7 @@ def ensure_plan_task_schema():
         if 'plan_task_preparation' not in table_names:
             PlanTaskPreparation.__table__.create(db.engine, checkfirst=True)
 
-        # 补齐缺失字段
+        # 补齐 plan_task 缺失字段
         inspector = inspect(db.engine)
         plan_cols = {col['name'] for col in inspector.get_columns('plan_task')}
         column_defs = {
@@ -226,13 +236,28 @@ def ensure_plan_task_schema():
             'result_notes': 'TEXT',
             'actual_start': 'DATETIME',
             'actual_finish': 'DATETIME',
-            'created_by': 'VARCHAR(50)'
+            'created_by': 'VARCHAR(50)',
+            'reminder_sent': 'BOOLEAN DEFAULT 0'
         }
+
 
         for col, ddl in column_defs.items():
             if col not in plan_cols:
                 with db.engine.begin() as conn:
                     conn.exec_driver_sql(f"ALTER TABLE plan_task ADD COLUMN {col} {ddl}")
+
+        # 补齐 system_host 缺失字段
+        host_cols = {col['name'] for col in inspector.get_columns('system_host')}
+        host_column_defs = {
+            'os_version': 'VARCHAR(100)',
+            'cpu_cores': 'VARCHAR(50)',
+            'memory_gb': 'VARCHAR(50)',
+            'disk_gb': 'VARCHAR(50)'
+        }
+        for col, ddl in host_column_defs.items():
+            if col not in host_cols:
+                with db.engine.begin() as conn:
+                    conn.exec_driver_sql(f"ALTER TABLE system_host ADD COLUMN {col} {ddl}")
 
 
 
@@ -248,11 +273,142 @@ def bootstrap_schema():
         if schema_bootstrapped:
             return
         ensure_plan_task_schema()
+        
+        # 启动后台提醒线程
+        reminder_thread = threading.Thread(target=background_reminder_worker, daemon=True)
+        reminder_thread.start()
+        
         schema_bootstrapped = True
+
 
 app.before_request(bootstrap_schema)
 
+
+def send_dingtalk_notification(webhook_url, message, title=None):
+    """发送钉钉通知 (支持 Markdown 格式)"""
+    if not webhook_url:
+        return False, "Webhook URL为空"
+    
+    webhook_url = webhook_url.strip()
+    
+    try:
+        # 如果提供了 title，说明是 Markdown 格式
+        if title:
+            data = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": title,
+                    "text": message
+                }
+            }
+        else:
+            data = {
+                "msgtype": "text",
+                "text": {
+                    "content": message
+                }
+            }
+        
+        encoded_data = json.dumps(data).encode('utf-8')
+        proxy_handler = urllib.request.ProxyHandler({})
+        opener = urllib.request.build_opener(proxy_handler)
+        
+        req = urllib.request.Request(webhook_url, data=encoded_data, headers={'Content-Type': 'application/json'})
+        with opener.open(req, timeout=10) as response:
+            result = response.read().decode('utf-8')
+            res_json = json.loads(result)
+            if res_json.get('errcode') == 0:
+                return True, "发送成功"
+            else:
+                return False, f"钉钉返回错误: {res_json.get('errmsg')}"
+    except Exception as e:
+        print(f"DEBUG: 钉钉发送异常: {str(e)}")
+        return False, f"发送失败: {str(e)}"
+
+
+
+
+def background_reminder_worker():
+    """后台提醒检查线程"""
+    import time
+    with app.app_context():
+        print("计划任务提醒后台线程已启动")
+        while True:
+            try:
+                now = datetime.now()
+                # 检查所有待执行且开启提醒且未发送提醒的任务
+                tasks = PlanTask.query.filter(
+                    PlanTask.status == '待执行',
+                    PlanTask.reminder_enabled == True,
+                    PlanTask.reminder_sent == False
+                ).all()
+                
+                for task in tasks:
+                    reminder_time = task.plan_time - timedelta(minutes=task.reminder_minutes)
+                    # 如果当前时间到达或超过提醒时间
+                    if reminder_time <= now <= task.plan_time + timedelta(hours=1):
+                        # 准备模板变量
+                        preps = task.preparations
+                        completed_count = len([p for p in preps if p.status == '已完成'])
+                        prep_text_list = []
+                        for p in preps:
+                            status_icon = "✅" if p.status == '已完成' else "⬜"
+                            prep_text_list.append(f"{status_icon} {p.description}")
+                        
+                        prep_text = '\n\n'.join(prep_text_list) if prep_text_list else '无'
+                        prep_progress = f"{completed_count}/{len(preps)}"
+                        
+                        message = task.reminder_message or '任务：{title}，计划时间：{plan_time}，负责人：{owner}。'
+                        # 处理换行符
+                        message = message.replace('\\n', '\n').replace('\r\n', '\n')
+                        
+                        replacements = {
+                            '{title}': task.title,
+                            '{plan_time}': task.plan_time.strftime('%Y-%m-%d %H:%M'),
+                            '{owner}': task.owner or '未指定',
+                            '{responsible}': task.responsible or '未指定',
+                            '{preparations}': prep_text,
+                            '{prep_progress}': prep_progress
+                        }
+                        
+                        for key, val in replacements.items():
+                            message = message.replace(key, str(val))
+                        
+                        # 构建美化的 Markdown 消息
+                        markdown_title = f"⏰ 计划任务提醒: {task.title}"
+                        safe_message = message.replace('\n', '\n\n> ')
+                        markdown_text = f"### ⏰ 计划任务提醒\n\n" \
+                                        f"**任务名称**: <font color='#1d4ed8'>{task.title}</font>\n\n" \
+                                        f"--- \n\n" \
+                                        f"📅 **计划时间**: {task.plan_time.strftime('%Y-%m-%d %H:%M')}\n\n" \
+                                        f"👤 **主负责人**: {task.owner or '未指定'}\n\n" \
+                                        f"👥 **责任人**: {task.responsible or '未指定'}\n\n" \
+                                        f"📊 **当前进度**: `{prep_progress}`\n\n" \
+                                        f"📝 **准备事项**:\n\n{prep_text}\n\n" \
+                                        f"--- \n\n" \
+                                        f"💡 **提醒详情**:\n\n> {safe_message}"
+
+                        
+                        webhook_url = task.webhook_url
+                        if webhook_url:
+                            success, msg = send_dingtalk_notification(webhook_url, markdown_text, title=markdown_title)
+
+                            if success:
+                                task.reminder_sent = True
+                                db.session.commit()
+                        else:
+                            # 标记为已尝试，避免重复日志，或者就在日志里提醒
+                            task.reminder_sent = True
+                            db.session.commit()
+                
+            except Exception as e:
+                db.session.rollback()
+            
+            time.sleep(60)
+
+
 # ==================== API接口 ====================
+
 
 
 
@@ -262,14 +418,23 @@ def login_required(f):
     from functools import wraps
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        print(f"检查登录状态 - Session内容: {dict(session)}")
-        print(f"Cookie: {request.cookies}")
         if 'user_id' not in session:
-            print("未登录 - 返回401")
             return jsonify({'code': -1, 'message': '请先登录'}), 401
-        print(f"已登录 - user_id: {session.get('user_id')}")
         return f(*args, **kwargs)
     return decorated_function
+
+# 管理员验证装饰器
+def admin_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'code': -1, 'message': '请先登录'}), 401
+        if session.get('role') != 'admin':
+            return jsonify({'code': -1, 'message': '权限不足，仅管理员可执行此操作'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 
 @app.route('/')
 def index():
@@ -365,8 +530,9 @@ def get_current_user():
 
 # 用户管理接口
 @app.route('/api/users', methods=['GET'])
-@login_required
+@admin_required
 def get_users():
+
     """获取用户列表"""
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
@@ -406,14 +572,11 @@ def get_users():
     })
 
 @app.route('/api/users', methods=['POST'])
-@login_required
+@admin_required
 def create_user():
     """创建用户"""
-    # 只有管理员可以创建用户
-    if session.get('role') != 'admin':
-        return jsonify({'code': -1, 'message': '权限不足'}), 403
-    
     data = request.json
+
     
     if User.query.filter_by(username=data['username']).first():
         return jsonify({'code': -1, 'message': '用户名已存在'})
@@ -435,22 +598,14 @@ def create_user():
     return jsonify({'code': 0, 'message': '创建成功', 'data': {'id': user.id}})
 
 @app.route('/api/users/<int:id>', methods=['PUT'])
-@login_required
+@admin_required
 def update_user(id):
     """更新用户"""
     user = User.query.get_or_404(id)
     data = request.json
     
-    # 只有管理员或用户本人可以修改
-    if session.get('role') != 'admin' and session.get('user_id') != id:
-        return jsonify({'code': -1, 'message': '权限不足'}), 403
-    
-    # 普通用户不能修改角色和状态
-    if session.get('role') != 'admin':
-        data.pop('role', None)
-        data.pop('is_active', None)
-    
     if 'username' in data and data['username'] != user.username:
+
         if User.query.filter_by(username=data['username']).first():
             return jsonify({'code': -1, 'message': '用户名已存在'})
         user.username = data['username']
@@ -475,18 +630,15 @@ def update_user(id):
     return jsonify({'code': 0, 'message': '更新成功'})
 
 @app.route('/api/users/<int:id>', methods=['DELETE'])
-@login_required
+@admin_required
 def delete_user(id):
     """删除用户"""
-    # 只有管理员可以删除用户
-    if session.get('role') != 'admin':
-        return jsonify({'code': -1, 'message': '权限不足'}), 403
-    
     # 不能删除自己
     if session.get('user_id') == id:
         return jsonify({'code': -1, 'message': '不能删除自己'})
     
     user = User.query.get_or_404(id)
+
     db.session.delete(user)
     db.session.commit()
     
@@ -500,11 +652,22 @@ def get_business_systems():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
     search = request.args.get('search', '')
+    status = request.args.get('status', '')
     
     query = BusinessSystem.query
     if search:
-        query = query.filter(BusinessSystem.system_name.contains(search))
+        # 同时匹配系统名称和IP地址
+        query = query.join(SystemHost, isouter=True).filter(
+            db.or_(
+                BusinessSystem.system_name.contains(search),
+                SystemHost.ip_address.contains(search)
+            )
+        )
     
+    if status:
+        query = query.filter(BusinessSystem.status == status)
+    
+    query = query.distinct()
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     
     return jsonify({
@@ -527,7 +690,11 @@ def get_business_systems():
                     'id': h.id,
                     'host_type': h.host_type,
                     'ip_address': h.ip_address,
-                    'host_purpose': h.host_purpose
+                    'host_purpose': h.host_purpose,
+                    'os_version': h.os_version,
+                    'cpu_cores': h.cpu_cores,
+                    'memory_gb': h.memory_gb,
+                    'disk_gb': h.disk_gb
                 } for h in sys.hosts],
                 'middlewares': [{
                     'id': m.id,
@@ -577,7 +744,11 @@ def create_business_system():
                 system_id=system.id,
                 host_type=host_data.get('host_type'),
                 ip_address=host_data.get('ip_address'),
-                host_purpose=host_data.get('host_purpose')
+                host_purpose=host_data.get('host_purpose'),
+                os_version=host_data.get('os_version'),
+                cpu_cores=host_data.get('cpu_cores'),
+                memory_gb=host_data.get('memory_gb'),
+                disk_gb=host_data.get('disk_gb')
             )
             db.session.add(host)
     
@@ -631,7 +802,11 @@ def update_business_system(id):
                 system_id=system.id,
                 host_type=host_data.get('host_type'),
                 ip_address=host_data.get('ip_address'),
-                host_purpose=host_data.get('host_purpose')
+                host_purpose=host_data.get('host_purpose'),
+                os_version=host_data.get('os_version'),
+                cpu_cores=host_data.get('cpu_cores'),
+                memory_gb=host_data.get('memory_gb'),
+                disk_gb=host_data.get('disk_gb')
             )
             db.session.add(host)
     
@@ -1012,6 +1187,11 @@ def get_dashboard_overview():
         total_time = sum([(e.resolved_at - e.occurred_at).total_seconds() for e in resolved])
         avg_response_time = round(total_time / len(resolved) / 3600, 1)
     
+    # 计划任务统计
+    total_tasks = PlanTask.query.count()
+    completed_tasks = PlanTask.query.filter_by(status='已完成').count()
+    pending_tasks = total_tasks - completed_tasks
+    
     return jsonify({
         'code': 0,
         'data': {
@@ -1031,7 +1211,11 @@ def get_dashboard_overview():
                 'severity': e.severity,
                 'status': e.status,
                 'occurred_at': e.occurred_at.strftime('%Y-%m-%d %H:%M:%S')
-            } for e in recent_events]
+            } for e in recent_events],
+            'plan_task_stats': {
+                'completed': completed_tasks,
+                'pending': pending_tasks
+            }
         }
     })
 
@@ -1176,7 +1360,74 @@ def get_plan_task(task_id):
     task = PlanTask.query.get_or_404(task_id)
     return jsonify({'code': 0, 'data': serialize_plan_task(task)})
 
+@app.route('/api/plan-tasks/test-notification', methods=['POST'])
+@login_required
+def test_plan_task_notification():
+    data = request.json
+    webhook_url = data.get('webhook_url')
+    template = data.get('reminder_message') or '【计划任务提醒】任务：{title}，计划时间：{plan_time}，负责人：{owner}。'
+    
+    # 模拟或获取变量
+    title = data.get('title', '测试任务')
+    plan_time = data.get('plan_time', datetime.now().strftime('%Y-%m-%d %H:%M'))
+    owner = data.get('owner', '测试负责人')
+    responsible = data.get('responsible', [])
+    if isinstance(responsible, list):
+        responsible = '、'.join(responsible)
+    
+    preps = data.get('preparations', [])
+    completed_count = len([p for p in preps if p.get('status') == '已完成'])
+    # 使用符号更直观地展示状态
+    prep_text_list = []
+    for p in preps:
+        status_icon = "✅" if p.get('status') == '已完成' else "⬜"
+        prep_text_list.append(f"{status_icon} {p.get('description')}")
+    
+    prep_text = '\n\n'.join(prep_text_list) if prep_text_list else '无'
+    prep_progress = f"{completed_count}/{len(preps)}"
+    
+    # 处理换行符：将字面量 \n 替换为实际换行符，并统一换行格式
+    template = template.replace('\\n', '\n').replace('\r\n', '\n')
+    
+    # 替换变量
+    message = template
+    replacements = {
+        '{title}': title,
+        '{plan_time}': plan_time,
+        '{owner}': owner,
+        '{responsible}': responsible,
+        '{preparations}': prep_text,
+        '{prep_progress}': prep_progress
+    }
+    
+    for key, val in replacements.items():
+        message = message.replace(key, str(val))
+    
+    # 构建美化的 Markdown 消息
+    markdown_title = f"⏰ 计划任务提醒: {title}"
+    # 确保引用块中的每一行都带上 > 符号，且 Markdown 换行建议使用双换行或末尾双空格
+    safe_message = message.replace('\n', '\n\n> ')
+    markdown_text = f"### ⏰ 计划任务提醒\n\n" \
+                    f"**任务名称**: <font color='#1d4ed8'>{title}</font>\n\n" \
+                    f"--- \n\n" \
+                    f"📅 **计划时间**: {plan_time}\n\n" \
+                    f"👤 **主负责人**: {owner}\n\n" \
+                    f"👥 **责任人**: {responsible}\n\n" \
+                    f"📊 **当前进度**: `{prep_progress}`\n\n" \
+                    f"📝 **准备事项**:\n\n{prep_text}\n\n" \
+                    f"--- \n\n" \
+                    f"💡 **提醒详情**:\n\n> {safe_message}"
+
+
+    success, msg = send_dingtalk_notification(webhook_url, markdown_text, title=markdown_title)
+
+    if success:
+        return jsonify({'code': 0, 'message': msg})
+    else:
+        return jsonify({'code': -1, 'message': msg})
+
 @app.route('/api/plan-tasks', methods=['POST'])
+
 @login_required
 def create_plan_task():
     data = request.json
@@ -1193,7 +1444,9 @@ def create_plan_task():
         plan_time=plan_time,
         reminder_minutes=data.get('reminder_minutes', 1440),
         reminder_enabled=data.get('reminder_enabled', True),
+        reminder_sent=False,
         alert_robot=data.get('alert_robot', '默认钉钉机器人'),
+
         webhook_url=data.get('webhook_url'),
         reminder_message=data.get('reminder_message') or '【计划任务提醒】任务：{title}，计划时间：{plan_time}，负责人：{owner}。请提前准备：{preparations}',
         status=data.get('status', '待执行'),
@@ -1236,11 +1489,17 @@ def update_plan_task(task_id):
         task.schedule_value = data['schedule_value']
     if 'plan_time' in data:
         try:
-            task.plan_time = datetime.fromisoformat(data['plan_time'])
+            new_plan_time = datetime.fromisoformat(data['plan_time'])
+            if new_plan_time != task.plan_time:
+                task.plan_time = new_plan_time
+                task.reminder_sent = False # 重置提醒状态
         except ValueError:
             return jsonify({'code': -1, 'message': '计划时间格式不正确'}), 400
     if 'reminder_minutes' in data:
-        task.reminder_minutes = data['reminder_minutes']
+        if task.reminder_minutes != data['reminder_minutes']:
+            task.reminder_minutes = data['reminder_minutes']
+            task.reminder_sent = False
+
     if 'reminder_enabled' in data:
         task.reminder_enabled = data['reminder_enabled']
     if 'alert_robot' in data:
@@ -1310,6 +1569,16 @@ def update_plan_task_status(task_id):
     return jsonify({'code': 0, 'message': '状态更新成功'})
 
 
+@app.route('/api/plan-tasks/<int:task_id>', methods=['DELETE'])
+@login_required
+def delete_plan_task(task_id):
+    """删除计划任务"""
+    task = PlanTask.query.get_or_404(task_id)
+    db.session.delete(task)
+    db.session.commit()
+    return jsonify({'code': 0, 'message': '删除成功'})
+
+
 def serialize_plan_task(task: PlanTask, simple=False):
     base = {
         'id': task.id,
@@ -1320,7 +1589,9 @@ def serialize_plan_task(task: PlanTask, simple=False):
         'plan_time': task.plan_time.strftime('%Y-%m-%d %H:%M'),
         'reminder_minutes': task.reminder_minutes,
         'reminder_enabled': task.reminder_enabled,
+        'reminder_sent': task.reminder_sent,
         'alert_robot': task.alert_robot,
+
         'webhook_url': task.webhook_url,
         'reminder_message': task.reminder_message,
         'status': task.status,
@@ -1375,8 +1646,9 @@ def get_configs():
     })
 
 @app.route('/api/configs', methods=['POST'])
-@login_required
+@admin_required
 def create_config():
+
     """创建配置"""
     data = request.json
     
@@ -1396,7 +1668,7 @@ def create_config():
     return jsonify({'code': 0, 'message': '创建成功', 'data': {'id': config.id}})
 
 @app.route('/api/configs/<int:id>', methods=['PUT'])
-@login_required
+@admin_required
 def update_config(id):
     """更新配置"""
     config = SystemConfig.query.get_or_404(id)
@@ -1411,8 +1683,9 @@ def update_config(id):
     return jsonify({'code': 0, 'message': '更新成功'})
 
 @app.route('/api/configs/<int:id>', methods=['DELETE'])
-@login_required
+@admin_required
 def delete_config(id):
+
     """删除配置"""
     config = SystemConfig.query.get_or_404(id)
     

@@ -19,7 +19,7 @@ echo ""
 echo "检查Python环境..."
 if ! command -v python3 &> /dev/null; then
     echo "错误: 未找到Python3"
-    echo "请先安装Python 3.7或更高版本："
+    echo "请先安装Python 3.7或更高版本 (推荐 3.8+)："
     echo "  Ubuntu/Debian: sudo apt-get install python3 python3-venv python3-pip"
     echo "  CentOS/RHEL:   sudo yum install python3 python3-pip"
     echo "  macOS:         brew install python3"
@@ -28,6 +28,20 @@ fi
 
 PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
 echo "✓ Python版本: $PYTHON_VERSION"
+
+# 检查版本号是否满足最低要求
+PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
+PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
+
+if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 7 ]); then
+    echo "错误: 当前Python版本 ($PYTHON_VERSION) 过低。"
+    echo "本程序需要 Python 3.7 或更高版本。"
+    exit 1
+fi
+
+if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -eq 7 ]; then
+    echo "提示: 检测到 Python 3.7，已切换至兼容版依赖。"
+fi
 
 # 检查pip
 if ! command -v pip3 &> /dev/null; then

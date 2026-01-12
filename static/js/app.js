@@ -45,7 +45,30 @@ let statusTaskId = null;
 let planTaskPreparations = [];
 
 
-const DEFAULT_REMINDER_TEMPLATE = "【计划任务提醒】任务：{title}\\n时间：{plan_time}\\n负责人：{owner}\\n准备进度：{prep_progress}\\n准备清单：{preparations}";
+const DEFAULT_REMINDER_TEMPLATE = "任务：{title}\n时间：{plan_time}\n负责人：{owner}\n准备进度：{prep_progress}\n准备清单：{preparations}";
+
+
+/**
+ * 设置高清晰度 Canvas (处理 Retina/High-DPI 屏幕)
+ */
+function setupCanvas(canvas, width, height) {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    
+    // 如果没有提供 width/height，则使用容器或现有尺寸
+    const logicalWidth = width || canvas.clientWidth || rect.width || 300;
+    const logicalHeight = height || canvas.clientHeight || rect.height || 300;
+    
+    canvas.width = logicalWidth * dpr;
+    canvas.height = logicalHeight * dpr;
+    canvas.style.width = `${logicalWidth}px`;
+    canvas.style.height = `${logicalHeight}px`;
+    
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    return ctx;
+}
+
 
 
 
@@ -56,8 +79,10 @@ document.addEventListener("DOMContentLoaded", function() {
     setPlanTaskTabActive('all');
     initHeaderUserMenu();
     initLogoutButtons();
+    checkCurrentUser(); // 检查当前用户及权限
     
     const urlPage = new URLSearchParams(window.location.search).get('page');
+
     const savedPage = localStorage.getItem('currentPage');
     const startPage = urlPage || savedPage || 'dashboard';
     showPage(startPage);
@@ -120,7 +145,46 @@ function initNavigation() {
     });
 }
 
+async function checkCurrentUser() {
+    try {
+        const response = await apiFetch(`${API_BASE}/current-user`);
+        const result = await response.json();
+        
+        if (result.code === 0) {
+            const user = result.data;
+            // 更新顶部用户信息
+            const nameEl = document.getElementById("header-username");
+            const roleEl = document.getElementById("header-role");
+            const avatarEl = document.getElementById("header-avatar");
+            
+            if (nameEl) nameEl.textContent = user.real_name || user.username;
+            if (roleEl) roleEl.textContent = user.role === 'admin' ? '系统管理员' : '普通用户';
+            if (avatarEl) {
+                const initial = (user.real_name || user.username || "A").trim().charAt(0).toUpperCase();
+                avatarEl.textContent = initial;
+            }
+            
+            // 根据权限隐藏/显示功能
+            const isAdmin = user.role === 'admin';
+            document.querySelectorAll(".admin-only").forEach(el => {
+                el.style.display = isAdmin ? "" : "none";
+            });
+            
+            // 如果普通用户强行通过URL进入管理员页面，跳转回仪表盘
+            if (!isAdmin && (currentPage === 'users' || currentPage === 'config')) {
+                showPage('dashboard');
+            }
+        } else {
+            // 未登录或登录过期
+            window.location.href = "/login.html";
+        }
+    } catch (error) {
+        console.error("检查用户信息失败:", error);
+    }
+}
+
 function initHeaderUserMenu() {
+
     const menu = document.getElementById("user-menu");
     const toggle = document.getElementById("user-menu-toggle");
     const dropdown = document.getElementById("user-dropdown");
@@ -189,8 +253,19 @@ async function handleLogout(e) {
 
 // 显示页面
 function showPage(pageName) {
+    // 权限检查
+    const adminPages = ['users', 'config'];
+    if (adminPages.includes(pageName)) {
+        const roleEl = document.getElementById("header-role");
+        const role = roleEl ? roleEl.textContent : '';
+        if (role && role !== '系统管理员') {
+            showToast("权限不足，无法访问该页面", "error");
+            return;
+        }
+    }
 
     // 更新导航激活状态
+
     document.querySelectorAll(".nav-item").forEach(item => {
         item.classList.remove("active");
         if (item.getAttribute("data-page") === pageName) {
@@ -282,6 +357,11 @@ async function loadDashboard() {
             
             // 渲染状态统计图表
             renderStatusChart(data.status_stats);
+
+            // 渲染计划任务统计图表
+            if (data.plan_task_stats) {
+                renderPlanTaskStatChart(data.plan_task_stats);
+            }
             
             // 渲染趋势图表（默认显示本周）
             loadTrendChart('week');
@@ -303,49 +383,117 @@ function renderStatusChart(statusStats) {
     const canvas = document.getElementById("status-chart");
     if (!canvas) return;
     
-    const ctx = canvas.getContext("2d");
+    const logicalWidth = canvas.parentElement.clientWidth;
+    const logicalHeight = 300;
+    const ctx = setupCanvas(canvas, logicalWidth, logicalHeight);
+    
     const colors = {
         "待处理": "#faad14",
         "处理中": "#1890ff",
         "已解决": "#52c41a",
-        "已关闭": "#d9d9d9"
+        "已关闭": "#94a3b8"
     };
     
     const total = statusStats.reduce((sum, item) => sum + item.count, 0);
-    let currentAngle = -Math.PI / 2;
-    
-    canvas.width = 300;
-    canvas.height = 300;
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
-    const radius = 100;
+    if (total === 0) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "14px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("暂无数据", logicalWidth / 2, logicalHeight / 2);
+        return;
+    }
+
+    const centerX = logicalWidth / 2;
+    const centerY = logicalHeight / 2 - 40;
+    const radius = 85;
     const innerRadius = 60;
     
-    statusStats.forEach(item => {
-        const sliceAngle = (item.count / total) * 2 * Math.PI;
+    // 增加一个简单的入场动画
+    let animationProgress = 0;
+    const animate = () => {
+        if (animationProgress < 1) {
+            animationProgress += 0.04;
+            if (animationProgress > 1) animationProgress = 1;
+            draw(animationProgress);
+            requestAnimationFrame(animate);
+        } else {
+            draw(1);
+        }
+    };
+
+    function draw(progress) {
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+        let currentAngle = -Math.PI / 2;
         
-        // 绘制扇形
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
-        ctx.arc(centerX, centerY, innerRadius, currentAngle + sliceAngle, currentAngle, true);
-        ctx.closePath();
-        ctx.fillStyle = colors[item.status] || "#999";
-        ctx.fill();
+        statusStats.forEach(item => {
+            const sliceAngle = (item.count / total) * 2 * Math.PI * progress;
+            
+            // 绘制扇形
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
+            ctx.arc(centerX, centerY, innerRadius, currentAngle + sliceAngle, currentAngle, true);
+            ctx.closePath();
+            
+            // 使用径向渐变或简单的颜色
+            const baseColor = colors[item.status] || "#999";
+            ctx.fillStyle = baseColor;
+            ctx.fill();
+            
+            // 只有在非最后一帧或有多个分段时才画间隔
+            if (statusStats.length > 1) {
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = 2;
+                ctx.lineJoin = "round";
+                ctx.stroke();
+            }
+            
+            currentAngle += sliceAngle;
+        });
+
+
+        // 绘制正中间的总数
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#1e293b";
+        ctx.font = "bold 28px Inter, sans-serif";
+        ctx.fillText(Math.round(total * progress), centerX, centerY - 5);
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "500 12px Inter, sans-serif";
+        ctx.fillText("事件总数", centerX, centerY + 20);
         
-        currentAngle += sliceAngle;
-    });
-    
-    // 绘制图例
-    let legendY = 120;
-    statusStats.forEach(item => {
-        ctx.fillStyle = colors[item.status] || "#999";
-        ctx.fillRect(canvas.width - 120, legendY, 12, 12);
-        ctx.fillStyle = "#333";
-        ctx.font = "12px sans-serif";
-        ctx.fillText(`${item.status} (${item.count})`, canvas.width - 100, legendY + 10);
-        legendY += 20;
-    });
+        // 绘制下方图例 (居中排版)
+        const legendY = centerY + radius + 45;
+        const itemWidth = logicalWidth / statusStats.length;
+        
+        statusStats.forEach((item, i) => {
+            const x = i * itemWidth + itemWidth / 2;
+            
+            // 颜色圆点
+            ctx.fillStyle = colors[item.status] || "#999";
+            ctx.beginPath();
+            ctx.arc(x - 35, legendY, 5, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // 状态文字
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "#475569";
+            ctx.font = "500 13px Inter, sans-serif";
+            ctx.fillText(item.status, x - 25, legendY);
+            
+            // 数量文字
+            ctx.fillStyle = "#1e293b";
+            ctx.font = "bold 13px Inter, sans-serif";
+            // 动态计算文字宽度以对齐数量
+            const labelWidth = ctx.measureText(item.status).width;
+            ctx.fillText(item.count, x - 25 + labelWidth + 8, legendY);
+        });
+    }
+
+    animate();
 }
+
+
 
 async function loadTrendChart(period = 'week') {
     try {
@@ -376,76 +524,104 @@ function renderTrendChart(data, labels, period) {
     const canvas = document.getElementById("trend-chart");
     if (!canvas) return;
     
-    const ctx = canvas.getContext("2d");
-    canvas.width = canvas.offsetWidth;
-    canvas.height = 300;
+    const logicalWidth = canvas.parentElement.clientWidth;
+    const logicalHeight = 300;
+    const ctx = setupCanvas(canvas, logicalWidth, logicalHeight);
     
-    const padding = 40;
-    const chartWidth = canvas.width - padding * 2;
-    const chartHeight = canvas.height - padding * 2;
-    const maxValue = Math.max(...data, 1);
+    const padding = 50;
+    const chartWidth = logicalWidth - padding * 2;
+    const chartHeight = logicalHeight - padding * 2;
+    const maxValue = Math.max(...data, 5);
     const stepX = data.length > 1 ? chartWidth / (data.length - 1) : chartWidth / 2;
     
-    // 清空画布
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // 绘制网格
-    ctx.strokeStyle = "#f0f0f0";
+    // 绘制背景网格
+    ctx.strokeStyle = "#f1f5f9";
     ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
     for (let i = 0; i <= 5; i++) {
         const y = padding + (chartHeight / 5) * i;
         ctx.beginPath();
         ctx.moveTo(padding, y);
-        ctx.lineTo(canvas.width - padding, y);
+        ctx.lineTo(logicalWidth - padding, y);
         ctx.stroke();
     }
+    ctx.setLineDash([]);
     
     // 绘制Y轴刻度
-    ctx.fillStyle = "#999";
-    ctx.font = "11px sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "11px Inter, sans-serif";
     ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
     for (let i = 0; i <= 5; i++) {
         const value = Math.round(maxValue * (5 - i) / 5);
         const y = padding + (chartHeight / 5) * i;
-        ctx.fillText(value, padding - 10, y + 4);
+        ctx.fillText(value, padding - 15, y);
     }
     
     if (data.length === 0) return;
     
-    // 绘制折线
-    ctx.strokeStyle = "#1890ff";
-    ctx.lineWidth = 2;
+    // 绘制阴影区域
+    const areaGradient = ctx.createLinearGradient(0, padding, 0, padding + chartHeight);
+    areaGradient.addColorStop(0, "rgba(24, 144, 255, 0.15)");
+    areaGradient.addColorStop(1, "rgba(24, 144, 255, 0.0)");
+    
     ctx.beginPath();
     data.forEach((value, index) => {
         const x = padding + stepX * index;
         const y = padding + chartHeight - (value / maxValue) * chartHeight;
-        if (index === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
-        }
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    ctx.lineTo(padding + chartWidth, padding + chartHeight);
+    ctx.lineTo(padding, padding + chartHeight);
+    ctx.closePath();
+    ctx.fillStyle = areaGradient;
+    ctx.fill();
+    
+    // 绘制折线
+    ctx.strokeStyle = "#1890ff";
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    data.forEach((value, index) => {
+        const x = padding + stepX * index;
+        const y = padding + chartHeight - (value / maxValue) * chartHeight;
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
     });
     ctx.stroke();
     
     // 绘制数据点
-    ctx.fillStyle = "#1890ff";
     data.forEach((value, index) => {
         const x = padding + stepX * index;
         const y = padding + chartHeight - (value / maxValue) * chartHeight;
+        
+        ctx.fillStyle = "#fff";
         ctx.beginPath();
-        ctx.arc(x, y, 4, 0, 2 * Math.PI);
+        ctx.arc(x, y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.strokeStyle = "#1890ff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        ctx.fillStyle = "#1890ff";
+        ctx.beginPath();
+        ctx.arc(x, y, 2.5, 0, 2 * Math.PI);
         ctx.fill();
     });
     
     // 绘制X轴标签
-    ctx.fillStyle = "#666";
-    ctx.font = "12px sans-serif";
+    ctx.fillStyle = "#64748b";
+    ctx.font = "500 12px Inter, sans-serif";
     ctx.textAlign = "center";
+    ctx.textBaseline = "top";
     labels.forEach((label, index) => {
         const x = padding + stepX * index;
-        ctx.fillText(label, x, canvas.height - padding + 20);
+        ctx.fillText(label, x, logicalHeight - padding + 15);
     });
 }
+
 
 function renderRecentEvents(events) {
     const tbody = document.getElementById("recent-events-body");
@@ -503,8 +679,137 @@ function renderLoginStats(stats) {
 }
 
 function loadDashboardByPeriod(type, period) {
+    // 更新按钮激活状态
+    const target = window.event?.target;
+    if (target) {
+        const chartHeader = target.closest('.chart-header');
+        if (chartHeader) {
+            chartHeader.querySelectorAll('.btn-text').forEach(btn => {
+                btn.classList.toggle('active', btn === target);
+            });
+        }
+    }
     showToast(`已切换到${period === 'today' ? '今日' : period === 'week' ? '本周' : '本月'}数据`, "info");
 }
+
+
+function renderPlanTaskStatChart(stats) {
+    const canvas = document.getElementById("plan-task-stat-chart");
+    if (!canvas) return;
+
+    const logicalWidth = canvas.parentElement.clientWidth;
+    const logicalHeight = 300;
+    const ctx = setupCanvas(canvas, logicalWidth, logicalHeight);
+    
+    const total = stats.completed + stats.pending;
+    const centerX = logicalWidth / 2;
+    const centerY = logicalHeight / 2 - 40;
+
+    const radius = 75;
+    const thickness = 18;
+
+    if (total === 0) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "14px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("暂无计划任务数据", centerX, centerY);
+        return;
+    }
+
+    const ratio = stats.completed / total;
+    let currentRatio = 0;
+    
+    const animate = () => {
+        if (currentRatio < ratio) {
+            currentRatio += 0.03;
+            if (currentRatio > ratio) currentRatio = ratio;
+            draw(currentRatio);
+            requestAnimationFrame(animate);
+        } else {
+            draw(ratio);
+        }
+    };
+
+    function draw(displayRatio) {
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+        
+        const startAngle = -Math.PI / 2;
+        const endAngle = startAngle + (displayRatio * 2 * Math.PI);
+
+        // 1. 绘制背景圆环
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+        ctx.lineWidth = thickness;
+        ctx.strokeStyle = "#f1f5f9";
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        // 2. 绘制进度圆环
+        if (stats.completed > 0) {
+            const gradient = ctx.createLinearGradient(centerX - radius, centerY, centerX + radius, centerY);
+            gradient.addColorStop(0, "#52c41a");
+            gradient.addColorStop(1, "#73d13d");
+            
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+            ctx.lineWidth = thickness;
+            ctx.strokeStyle = gradient;
+            ctx.lineCap = "round";
+            
+            // 发光效果
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = "rgba(82, 196, 26, 0.25)";
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+
+        // 3. 中间文字
+        const percent = Math.round(displayRatio * 100);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#1e293b";
+        ctx.font = "bold 32px Inter, sans-serif";
+        ctx.fillText(`${percent}%`, centerX, centerY - 8);
+        
+        ctx.fillStyle = "#64748b";
+        ctx.font = "500 13px Inter, sans-serif";
+        ctx.fillText("任务完成率", centerX, centerY + 22);
+
+        // 4. 下方数据汇总
+        const statsY = centerY + radius + 50;
+        const items = [
+            { label: "总计划", value: total, color: "#1890ff" },
+            { label: "已完成", value: stats.completed, color: "#52c41a" },
+            { label: "待执行", value: stats.pending, color: "#faad14" }
+        ];
+
+        const itemWidth = logicalWidth / 3;
+        items.forEach((item, i) => {
+            const x = i * itemWidth + itemWidth / 2;
+            
+            ctx.fillStyle = item.color;
+            ctx.beginPath();
+            ctx.arc(x - 32, statsY - 5, 4, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.fillStyle = "#1e293b";
+            ctx.font = "bold 20px Inter, sans-serif";
+            ctx.textAlign = "left";
+            ctx.fillText(item.value, x - 18, statsY);
+            
+            ctx.fillStyle = "#94a3b8";
+            ctx.font = "500 12px Inter, sans-serif";
+            ctx.fillText(item.label, x - 18, statsY + 20);
+        });
+    }
+
+    animate();
+}
+
+
+
+
+
 
 
 
@@ -612,7 +917,12 @@ function updateDictSelects() {
 async function loadBusinessSystems(page = 1) {
     try {
         const search = document.getElementById("system-search")?.value || "";
-        const response = await apiFetch(`${API_BASE}/business-systems?page=${page}&per_page=10&search=${search}`);
+        const status = document.getElementById("system-status-filter")?.value || "";
+        let url = `${API_BASE}/business-systems?page=${page}&per_page=10&search=${encodeURIComponent(search)}`;
+        if (status) {
+            url += `&status=${encodeURIComponent(status)}`;
+        }
+        const response = await apiFetch(url);
         const result = await response.json();
         
         if (result.code === 0) {
@@ -630,29 +940,39 @@ function renderBusinessSystemsTable(systems) {
     if (!tbody) return;
     
     tbody.innerHTML = systems.map(sys => {
-        const hostInfo = sys.hosts && sys.hosts.length > 0 
-            ? `${sys.hosts[0].host_type || "-"} (${sys.hosts.length})`
-            : "-";
-        const ipInfo = sys.hosts && sys.hosts.length > 0 
-            ? sys.hosts[0].ip_address || "-"
-            : "-";
-        const mwInfo = sys.middlewares && sys.middlewares.length > 0
-            ? `${sys.middlewares[0].middleware_type || "-"} (${sys.middlewares.length})`
-            : "-";
+        // 渲染IP地址列表：使用胶囊样式，多个自适应平铺
+        const ipList = (sys.hosts || []).map(h => 
+            `<span class="pill pill-soft" style="font-size: 11px; margin: 2px; padding: 2px 6px; background: rgba(99, 102, 241, 0.1); color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.2);">${h.ip_address || "-"}</span>`
+        ).join("");
         
+        // 渲染中间件列表：显示类型+版本
+        const mwList = (sys.middlewares || []).map(m => 
+            `<div style="font-size: 11px; color: #64748b; line-height: 1.4;">${m.middleware_type || "-"}${m.middleware_version ? `(${m.middleware_version})` : ""}</div>`
+        ).join("");
+
+        // 主机概览信息
+        const hostSummary = sys.hosts && sys.hosts.length > 0 
+            ? `<div style="font-size: 12px; font-weight: 600; color: #1e293b;">${sys.hosts.length} 台主机</div>`
+            : '<span style="color: #cbd5e1;">-</span>';
+
         return `
         <tr>
-            <td>${sys.system_name}</td>
-            <td>${hostInfo}</td>
-            <td>${ipInfo}</td>
-            <td>${sys.database || "-"} ${sys.database_version || ""}</td>
-            <td>${mwInfo}</td>
+            <td style="font-weight: 600; color: #1e293b;">${sys.system_name}</td>
+            <td>${hostSummary}</td>
+            <td><div style="display: flex; flex-wrap: wrap; max-width: 250px;">${ipList || "-"}</div></td>
+            <td>
+                <div style="font-weight: 500; color: #334155;">${sys.database || "-"}</div>
+                <div style="font-size: 11px; color: #94a3b8;">${sys.database_version || ""}</div>
+            </td>
+            <td><div style="max-height: 60px; overflow-y: auto;">${mwList || "-"}</div></td>
             <td>${sys.department || "-"}</td>
             <td><span class="status-badge ${getStatusClass(sys.status)}">${sys.status}</span></td>
             <td>
-                <button class="btn-action" onclick="editSystem(${sys.id})">编辑</button>
-                <button class="btn-action" onclick="viewSystem(${sys.id})">详情</button>
-                <button class="btn-action danger" onclick="deleteSystem(${sys.id})">删除</button>
+                <div class="table-actions">
+                    <button class="btn-action" onclick="editSystem(${sys.id})" title="编辑">编辑</button>
+                    <button class="btn-action" onclick="showSystemViewDialog(${sys.id})" title="详情">详情</button>
+                    <button class="btn-action danger" onclick="deleteSystem(${sys.id})" title="删除">删除</button>
+                </div>
             </td>
         </tr>
     `;
@@ -765,6 +1085,20 @@ function addHostRow(hostData = null) {
             </div>
         </div>
         <div class="form-row">
+            <div class="form-group">
+                <label>操作系统</label>
+                <input type="text" class="host-os" placeholder="CentOS 7.9 / Windows 2016" value="${hostData?.os_version || ""}" />
+            </div>
+            <div class="form-group">
+                <label>配置 (CPU/内存/磁盘)</label>
+                <div style="display: flex; gap: 4px;">
+                    <input type="text" class="host-cpu" style="width: 30%;" placeholder="核数" value="${hostData?.cpu_cores || ""}" />
+                    <input type="text" class="host-mem" style="width: 35%;" placeholder="内存(GB)" value="${hostData?.memory_gb || ""}" />
+                    <input type="text" class="host-disk" style="width: 35%;" placeholder="磁盘(GB)" value="${hostData?.disk_gb || ""}" />
+                </div>
+            </div>
+        </div>
+        <div class="form-row">
             <div class="form-group full-width">
                 <label>主机用途</label>
                 <input type="text" class="host-purpose" placeholder="应用服务器、数据库服务器等" value="${hostData?.host_purpose || ""}" />
@@ -829,6 +1163,13 @@ function removeMiddlewareRow(mwId) {
 
 async function saveSystem() {
     const systemId = document.getElementById("system-id").value;
+    const systemName = document.getElementById("system-name").value.trim();
+    
+    if (!systemName) {
+        showToast("系统名称为必填项", "error");
+        document.getElementById("system-name").focus();
+        return;
+    }
     
     // 收集主机信息
     const hosts = [];
@@ -836,11 +1177,19 @@ async function saveSystem() {
         const hostType = row.querySelector(".host-type").value;
         const ipAddress = row.querySelector(".host-ip").value;
         const hostPurpose = row.querySelector(".host-purpose").value;
+        const osVersion = row.querySelector(".host-os").value;
+        const cpuCores = row.querySelector(".host-cpu").value;
+        const memoryGb = row.querySelector(".host-mem").value;
+        const diskGb = row.querySelector(".host-disk").value;
         if (hostType || ipAddress) {
             hosts.push({
                 host_type: hostType,
                 ip_address: ipAddress,
-                host_purpose: hostPurpose
+                host_purpose: hostPurpose,
+                os_version: osVersion,
+                cpu_cores: cpuCores,
+                memory_gb: memoryGb,
+                disk_gb: diskGb
             });
         }
     });
@@ -907,8 +1256,119 @@ function editSystem(systemId) {
 }
 
 function viewSystem(systemId) {
-    showSystemDialog(systemId);
+    showSystemViewDialog(systemId);
 }
+
+async function showSystemViewDialog(systemId) {
+    try {
+        const response = await apiFetch(`${API_BASE}/business-systems`);
+        const result = await response.json();
+        if (result.code === 0) {
+            const system = result.data.items.find(s => s.id === systemId);
+            if (system) {
+                renderSystemView(system);
+                const dialog = document.getElementById("system-view-dialog");
+                if (dialog) dialog.classList.add("active");
+            }
+        }
+    } catch (error) {
+        console.error("加载业务系统详情失败:", error);
+        showToast("加载业务系统详情失败", "error");
+    }
+}
+
+function renderSystemView(data) {
+    const body = document.getElementById("system-view-body");
+    const titleEl = document.getElementById("system-view-title");
+    if (!body || !titleEl) return;
+
+    titleEl.textContent = data.system_name || '业务系统详情';
+
+    const hosts = (data.hosts || []).map(h => `
+        <div class="host-glass-card">
+            <div style="font-weight: 700; color: #1e293b; margin-bottom: 6px; display: flex; justify-content: space-between;">
+                <span>${h.ip_address || '-'}</span>
+                <span class="event-view-badge primary" style="font-size: 10px;">${h.host_type || '主机'}</span>
+            </div>
+            <div style="font-size: 12px; color: #64748b; line-height: 1.5;">
+                <div>系统: ${h.os_version || '-'}</div>
+                <div>配置: ${h.cpu_cores || '-'}核 / ${h.memory_gb || '-'}GB / ${h.disk_gb || '-'}GB</div>
+            </div>
+        </div>
+    `).join("") || '<div class="event-view-desc" style="grid-column: 1/-1;">暂无主机信息</div>';
+
+    const middlewares = (data.middlewares || []).map(m => `
+        <div class="event-view-desc" style="background: rgba(255, 255, 255, 0.5); padding: 8px; border-radius: 8px; margin-bottom: 8px; border: 1px solid rgba(226, 232, 240, 0.6);">
+            <div style="font-weight: 600; color: #334155; font-size: 13px;">${m.middleware_type || '未知中间件'}</div>
+            <div style="font-size: 12px; color: #64748b;">版本: ${m.middleware_version || '-'}</div>
+            ${m.remarks ? `<div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">${m.remarks}</div>` : ''}
+        </div>
+    `).join("") || '<div class="event-view-desc">暂无中间件信息</div>';
+
+    body.innerHTML = `
+        <div class="system-view-grid">
+            <!-- 左侧核心信息 -->
+            <div class="system-view-main">
+                <div class="system-view-card" style="flex: 1;">
+                    <div class="event-view-title-row">
+                        <h3>基本信息</h3>
+                        <span class="event-view-badge ${getStatusClass(data.status) === 'success' ? 'success' : getStatusClass(data.status) === 'danger' ? 'danger' : 'warn'}">${data.status}</span>
+                    </div>
+                    <div class="event-view-meta" style="grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                        <span>系统编码：${data.system_code || '-'}</span>
+                        <span>管理部室：${data.department || '-'}</span>
+                        <span>负责人：${data.contact_person || '-'}</span>
+                        <span>联系电话：${data.contact_phone || '-'}</span>
+                    </div>
+                    <div class="event-view-section-title" style="margin-top:16px;">系统描述</div>
+                    <div class="event-view-desc" style="background: #f8fafc; padding: 10px; border-radius: 8px;">${data.description || '暂无描述'}</div>
+                </div>
+            </div>
+
+            <!-- 右侧组件环境 -->
+            <div class="system-view-side">
+                <div class="system-view-card" style="height: 100%;">
+                    <div class="event-view-section-title">组件环境</div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-size: 12px; font-weight: 700; color: #6366f1; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Database</div>
+                        <div class="event-view-card compact" style="padding: 10px; background: linear-gradient(135deg, #f5f7ff, #ffffff);">
+                            <div style="font-weight: 700; color: #1e293b;">${data.database || '-'}</div>
+                            <div style="font-size: 12px; color: #64748b;">版本: ${data.database_version || '-'}</div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div style="font-size: 12px; font-weight: 700; color: #6366f1; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Middleware</div>
+                        <div style="max-height: 200px; overflow-y: auto;">
+                            ${middlewares}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 下方主机资源（自适应平铺） -->
+            <div class="system-view-bottom">
+                <div class="system-view-card">
+                    <div class="event-view-section-title" style="display: flex; align-items: center; gap: 8px;">
+                        <span>主机资源清单</span>
+                        <span style="font-size: 11px; font-weight: normal; color: #94a3b8; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${data.hosts?.length || 0} 台</span>
+                    </div>
+                    <div class="host-grid-container">
+                        ${hosts}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+
+function closeSystemViewDialog() {
+    const dialog = document.getElementById("system-view-dialog");
+    if (dialog) dialog.classList.remove("active");
+}
+
 
 async function deleteSystem(systemId) {
     if (!confirm("确定要删除该业务系统吗?")) {
@@ -1997,7 +2457,8 @@ function renderPlanTaskTable(tasks) {
         const scheduleLabel = getScheduleLabel(task.schedule_type);
         const actions = [
             `<button class="btn-action" onclick="viewPlanTaskDetail(${task.id})">查看</button>`,
-            `<button class="btn-action" onclick="editPlanTask(${task.id})">编辑</button>`
+            `<button class="btn-action" onclick="editPlanTask(${task.id})">编辑</button>`,
+            `<button class="btn-action danger" onclick="deletePlanTask(${task.id})">删除</button>`
         ];
 
 
@@ -2344,6 +2805,70 @@ async function savePlanTask() {
     }
 }
 
+async function testPlanTaskNotification() {
+    const robotName = document.getElementById("plan-task-alert-robot").value;
+    const webhook = getAlertRobotWebhook(robotName);
+    const template = document.getElementById("plan-task-reminder-message").value;
+    
+    if (!robotName) {
+        showToast("请先选择告警机器人", "warning");
+        return;
+    }
+    
+    if (!webhook) {
+        showToast("该机器人未配置Webhook地址", "warning");
+        return;
+    }
+    
+    const payload = {
+        webhook_url: webhook,
+        reminder_message: template || DEFAULT_REMINDER_TEMPLATE,
+        title: document.getElementById("plan-task-title").value || "测试任务",
+        plan_time: document.getElementById("plan-task-plan-time").value || new Date().toLocaleString(),
+        owner: document.getElementById("plan-task-owner").value || "测试负责人",
+        responsible: document.getElementById("plan-task-responsible").value.split(',').filter(i => i.trim()),
+        preparations: collectPreparationData()
+    };
+    
+    try {
+        showToast("正在发送测试通知...", "info");
+        const response = await apiFetch(`${API_BASE}/plan-tasks/test-notification`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (result.code === 0) {
+            showToast("测试通知发送成功", "success");
+        } else {
+            showToast(result.message || "测试通知发送失败", "error");
+        }
+    } catch (error) {
+        console.error("测试通知失败:", error);
+        showToast("请求失败，请检查网络", "error");
+    }
+}
+
+
+async function deletePlanTask(id) {
+    if (!confirm("确定要删除该计划任务吗？")) return;
+    
+    try {
+        const response = await apiFetch(`${API_BASE}/plan-tasks/${id}`, {
+            method: 'DELETE'
+        });
+        const result = await response.json();
+        if (result.code === 0) {
+            showToast("删除成功");
+            loadPlanTasks();
+        } else {
+            showToast(result.message || "删除失败", "error");
+        }
+    } catch (error) {
+        console.error("删除任务失败:", error);
+        showToast("网络错误", "error");
+    }
+}
+
 async function editPlanTask(id) {
     await showPlanTaskDialog(id);
 }
@@ -2508,6 +3033,9 @@ window.closeSystemDialog = closeSystemDialog;
 window.saveSystem = saveSystem;
 window.editSystem = editSystem;
 window.viewSystem = viewSystem;
+window.showSystemViewDialog = showSystemViewDialog;
+window.closeSystemViewDialog = closeSystemViewDialog;
+
 window.deleteSystem = deleteSystem;
 window.loadBusinessSystems = loadBusinessSystems;
 window.showEventDialog = showEventDialog;
@@ -2556,6 +3084,9 @@ window.closePlanTaskDialog = closePlanTaskDialog;
 window.addPreparationItem = addPreparationItem;
 window.removePreparationItem = removePreparationItem;
 window.savePlanTask = savePlanTask;
+window.testPlanTaskNotification = testPlanTaskNotification;
+window.deletePlanTask = deletePlanTask;
+
 window.editPlanTask = editPlanTask;
 window.viewPlanTaskDetail = viewPlanTaskDetail;
 window.closePlanTaskDetail = closePlanTaskDetail;
