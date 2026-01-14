@@ -8,7 +8,8 @@ Write-Host "Python版本: " -NoNewline
 py --version
 Write-Host ""
 Write-Host "启动Flask服务器..." -ForegroundColor Cyan
-Write-Host "服务地址: http://localhost:5000" -ForegroundColor Cyan
+Write-Host "服务地址: http://localhost:5001" -ForegroundColor Cyan
+
 Write-Host "管理员账号: admin" -ForegroundColor Cyan
 Write-Host "初始密码: Flzx3qc@2024" -ForegroundColor Cyan
 Write-Host ""
@@ -19,4 +20,5 @@ Write-Host ""
 $env:FLASK_APP = "app"
 $env:FLASK_DEBUG = "1"
 
-py -m flask run --host=0.0.0.0 --port=5000
+py -m flask run --host=0.0.0.0 --port=5001
+

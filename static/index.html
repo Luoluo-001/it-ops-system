@@ -61,6 +61,11 @@
                             <span class="nav-icon">🗓️</span>
                             <span class="nav-text">计划任务</span>
                         </a>
+                        <a href="#" class="nav-item admin-only" data-page="notification-audits">
+                            <span class="nav-icon">🛡️</span>
+                            <span class="nav-text">通知审计</span>
+                        </a>
+
                         <a href="#" class="nav-item admin-only" data-page="users">
                             <span class="nav-icon">👥</span>
                             <span class="nav-text">用户管理</span>
@@ -221,6 +226,7 @@
                             </select>
                         </div>
                         <div class="filter-right">
+                            <button class="btn btn-secondary" onclick="exportSystems()">📥 导出Excel</button>
                             <button class="btn btn-primary" onclick="showSystemDialog()">+ 新增业务系统</button>
                         </div>
                     </div>
@@ -229,8 +235,10 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
+                                    <th style="width: 40px; text-align: center;"><input type="checkbox" id="systems-select-all" onclick="toggleSelectAllSystems(this)"></th>
                                     <th>系统名称</th>
                                     <th>主机类型</th>
+
                                     <th>IP地址</th>
                                     <th>数据库</th>
                                     <th>中间件</th>
@@ -308,7 +316,12 @@
                                     <input type="text" id="event-system-name" placeholder="请输入系统名称" />
                                 </div>
                                 <div class="form-group">
+                                    <label>事件标题</label>
+                                    <input type="text" id="event-title-filter" placeholder="模糊搜索事件标题" />
+                                </div>
+                                <div class="form-group">
                                     <label>时间范围</label>
+
                                     <div class="date-range">
                                         <input type="date" id="event-start-date" />
                                         <span>至</span>
@@ -348,7 +361,17 @@
                                         <option value="较低">较低</option>
                                     </select>
                                 </div>
+                                <div class="form-group">
+                                    <label>处置进度</label>
+                                    <select id="event-progress-filter">
+                                        <option value="">全部</option>
+                                        <option value="未解决">未解决</option>
+                                        <option value="已解决">已解决</option>
+                                        <option value="已挂起">已挂起</option>
+                                    </select>
+                                </div>
                             </div>
+
                             <div class="form-actions">
                                 <button class="btn btn-primary" onclick="searchEvents()">查询</button>
                                 <button class="btn" onclick="resetEventFilters()">重置</button>
@@ -370,10 +393,12 @@
                                     <th>事件类型</th>
                                     <th>严重程度</th>
                                     <th>状态</th>
+                                    <th>处置进度</th>
                                     <th>发生时间</th>
                                     <th>报告人</th>
                                     <th>操作</th>
                                 </tr>
+
                             </thead>
                             <tbody id="events-table-body">
                                 <!-- 动态加载 -->
@@ -510,8 +535,56 @@
 
                 </div>
 
+                <!-- 通知审计页 -->
+                <div id="notification-audits-page" class="page" style="display: none;">
+                    <div class="page-header">
+                        <h1 class="page-title">通知审计</h1>
+                        <p class="page-subtitle">查看所有已发送的钉钉通知及其状态</p>
+                    </div>
+
+                    <div class="filter-bar">
+                        <div class="filter-left">
+                            <div class="form-group-inline">
+                                <label>时间范围</label>
+                                <input type="date" id="audit-filter-start" class="filter-input">
+                                <span class="filter-separator">-</span>
+                                <input type="date" id="audit-filter-end" class="filter-input">
+                            </div>
+                            <div class="search-box">
+                                <span class="search-icon">🔍</span>
+                                <input type="text" id="audit-filter-title" placeholder="搜索任务标题" onkeypress="if(event.keyCode==13) loadNotificationAudits(1)" />
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadNotificationAudits(1)">查询</button>
+                            <button class="btn btn-text" onclick="resetAuditFilters()">重置</button>
+                        </div>
+                        <div class="filter-right">
+                            <button class="btn btn-danger" onclick="bulkDeleteAudits()" id="btn-bulk-delete" style="display: none;">批量删除</button>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="data-table" id="audit-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px; text-align: center;">
+                                        <input type="checkbox" id="audit-select-all" onclick="toggleSelectAllAudits(this)">
+                                    </th>
+                                    <th style="width: 170px;">发送时间</th>
+                                    <th style="width: 180px;">关联任务</th>
+                                    <th>消息标题</th>
+                                    <th style="width: 180px;">机器人/通道</th>
+                                    <th style="width: 110px;">状态</th>
+                                </tr>
+                            </thead>
+                            <tbody id="audit-tbody"></tbody>
+                        </table>
+                        <div class="pagination" id="audit-pagination"></div>
+                    </div>
+                </div>
+
 
                 <!-- 用户管理页 -->
+
 
                 <div id="users-page" class="page" style="display: none;">
                     <div class="page-header">
@@ -794,12 +867,6 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>故障分类</label>
-                            <input type="text" id="event-category" placeholder="数据库故障" />
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
                             <label>严重程度 <span class="required">*</span></label>
                             <select id="event-severity" required>
                                 <option value="">请选择</option>
@@ -809,6 +876,9 @@
                                 <option value="较低">较低</option>
                             </select>
                         </div>
+                    </div>
+
+                    <div class="form-row">
                         <div class="form-group">
                             <label>事件状态</label>
                             <select id="event-status">
@@ -818,17 +888,18 @@
                                 <option value="已关闭">已关闭</option>
                             </select>
                         </div>
-                    </div>
-                    <div class="form-row">
                         <div class="form-group">
                             <label>报告人</label>
                             <input type="text" id="event-reported-by" placeholder="张三" />
                         </div>
-                        <div class="form-group">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
                             <label>处理人</label>
                             <input type="text" id="event-assigned-to" placeholder="运维团队" />
                         </div>
                     </div>
+
                     <div class="form-row">
                         <div class="form-group full-width">
                             <label>事件标题 <span class="required">*</span></label>
@@ -851,7 +922,18 @@
                     <div class="form-section-title">进度结果</div>
                     <div class="form-row">
                         <div class="form-group full-width">
+                            <label>处置进度</label>
+                            <select id="event-progress-status">
+                                <option value="未解决">未解决</option>
+                                <option value="已解决">已解决</option>
+                                <option value="已挂起">已挂起</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
                             <label>解决方案</label>
+
                             <textarea id="event-resolution" rows="3" placeholder="描述如何解决该事件..."></textarea>
                         </div>
                     </div>
@@ -925,22 +1007,49 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label>执行周期</label>
-                            <select id="plan-task-schedule-type">
+                            <select id="plan-task-schedule-type" onchange="handlePlanTaskScheduleChange()">
                                 <option value="once">一次性</option>
                                 <option value="daily">每天</option>
                                 <option value="weekly">每周</option>
                                 <option value="monthly">每月</option>
-                                <option value="quarterly">每季度</option>
-                                <option value="yearly">每年</option>
                                 <option value="cron">自定义Cron</option>
                             </select>
                         </div>
-                        <div class="form-group">
-                            <label>计划执行时间 <span class="required">*</span></label>
+                        <div class="form-group" id="plan-task-plan-time-group">
+                            <label id="plan-task-plan-time-label">计划执行时间 <span class="required">*</span></label>
                             <input type="datetime-local" id="plan-task-plan-time" required />
                         </div>
                     </div>
+
+                    <!-- 每周几选择 -->
+                    <div class="form-row" id="plan-task-weekly-row" style="display: none;">
+                        <div class="form-group full-width">
+                            <label>执行日 (每周)</label>
+                            <select id="plan-task-weekly-day">
+                                <option value="0">星期一</option>
+                                <option value="1">星期二</option>
+                                <option value="2">星期三</option>
+                                <option value="3">星期四</option>
+                                <option value="4">星期五</option>
+                                <option value="5">星期六</option>
+                                <option value="6">星期日</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 每月几号选择 -->
+                    <div class="form-row" id="plan-task-monthly-row" style="display: none;">
+                        <div class="form-group full-width">
+                            <label>执行日 (每月)</label>
+                            <div class="input-with-unit">
+                                <input type="number" id="plan-task-monthly-day" min="1" max="31" value="1" />
+                                <span>号</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="form-row" id="plan-task-cron-row" style="display: none;">
+
                         <div class="form-group full-width">
                             <label>Cron表达式</label>
                             <input type="text" id="plan-task-schedule-value" placeholder="0 30 9 * * ?" />
@@ -1189,5 +1298,85 @@
             }
         };
     </script>
+    <!-- 审计详情弹窗 -->
+    <div id="audit-detail-dialog" class="modal">
+        <div class="modal-content" style="max-width: 800px; width: 90%;">
+            <div class="modal-header">
+                <h2 id="audit-detail-title-head">通知详情审计</h2>
+                <button class="modal-close" onclick="closeModal('audit-detail-dialog')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="detail-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <div class="detail-item">
+                        <div class="detail-label" style="color: #64748b; font-size: 12px; margin-bottom: 4px;">发送时间</div>
+                        <div id="audit-detail-time" style="font-weight: 500; color: #1e293b;"></div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label" style="color: #64748b; font-size: 12px; margin-bottom: 4px;">发送状态</div>
+                        <div id="audit-detail-status"></div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label" style="color: #64748b; font-size: 12px; margin-bottom: 4px;">关联任务</div>
+                        <div id="audit-detail-task" style="font-weight: 500; color: #1e293b;"></div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label" style="color: #64748b; font-size: 12px; margin-bottom: 4px;">通道名称</div>
+                        <div id="audit-detail-robot" style="font-weight: 500; color: #1e293b;"></div>
+                    </div>
+                    <div class="detail-item" style="grid-column: span 2;">
+                        <div class="detail-label" style="color: #64748b; font-size: 12px; margin-bottom: 4px;">Webhook 地址</div>
+                        <div id="audit-detail-webhook" style="word-break: break-all; font-family: 'Cascadia Code', Consolas, monospace; font-size: 12px; color: #475569; background: #fff; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px;"></div>
+                    </div>
+                    <div id="audit-detail-error-container" class="detail-item" style="grid-column: span 2; display: none;">
+                        <div class="detail-label" style="color: #ef4444; font-size: 12px; margin-bottom: 4px;">异常信息</div>
+                        <div id="audit-detail-error" style="color: #ef4444; background: #fef2f2; padding: 10px; border-radius: 4px; border: 1px solid #fee2e2; font-size: 13px;"></div>
+                    </div>
+                </div>
+                
+                <div class="message-preview">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h3 style="font-size: 15px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 18px;">📄</span> 消息原文预览
+                        </h3>
+                        <span id="audit-detail-msgtype" class="status-badge" style="background: #e0e7ff; color: #4338ca; border: none;">Markdown</span>
+                    </div>
+                    <div id="audit-detail-content" style="background: #1e293b; color: #e2e8f0; padding: 20px; border-radius: 8px; white-space: pre-wrap; font-family: 'Cascadia Code', Consolas, monospace; font-size: 13px; line-height: 1.6; max-height: 350px; overflow-y: auto; border: 1px solid #334155; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);"></div>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top: 1px solid #e2e8f0; padding-top: 20px;">
+                <button class="btn btn-primary" style="min-width: 100px;" onclick="closeModal('audit-detail-dialog')">关闭</button>
+            </div>
+        </div>
+    </div>
+    <!-- 页面切换过度动画 -->
+    <div id="page-transition" class="page-transition-overlay">
+        <div class="luxury-hourglass">
+            <div class="glass-container">
+                <div class="glass-top">
+                    <div class="sand-top"></div>
+                </div>
+                <div class="glass-mid">
+                    <div class="sand-stream"></div>
+                </div>
+                <div class="glass-bottom">
+                    <div class="sand-bottom"></div>
+                </div>
+            </div>
+            <div class="gold-frame">
+                <div class="cap top"></div>
+                <div class="pillar left"></div>
+                <div class="pillar right"></div>
+                <div class="cap bottom"></div>
+            </div>
+        </div>
+    </div>
+
+
+
+
+
+
+
 </body>
+
 </html>

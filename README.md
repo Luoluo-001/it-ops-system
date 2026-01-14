@@ -1,101 +1,92 @@
-# IT运维管理系统
+# IT运维事件管理系统 (IT-Ops-System)
 
-一个基于 Flask 的 IT 运维管理系统，用于事件管理、计划任务和团队协作。
+一个专为运维团队设计的全功能管理系统。基于 Flask + SQLAlchemy + Vanilla JS 开发，提供精美的 UI 界面与强大的运维工作流支持。
 
-## 功能特性
-- 📊 **事件管理概览**：状态/趋势图表，最近事件列表，登录统计
-- 📋 **事件管理**：创建、编辑、只读查看弹窗，附件下载
-- 🗓️ **计划任务**：准备事项进度展示（完成/总数）、提醒模板支持 `{prep_progress}`
-- 👥 **用户管理**：玻璃拟态表格与编辑，角色/部门维护
-- ⚙️ **系统配置**：字典配置、告警机器人
-- 🔐 **页面记忆**：刷新停留在当前菜单，登录成功默认进入“事件管理概览”
+## 🌟 核心功能
 
-## 系统要求
-- Python 3.7+ (推荐 3.8+)
-- SQLite 3
-- 支持操作系统：Linux、macOS、Windows
+- 📊 **事件管理概览 (Dashboard)**
+  - 实时统计事件总量、待处理、处理中及已解决任务。
+  - 动态趋势图表（事件趋势、分类占比、计划任务执行情况）。
+  - 最近事件动态流，快速掌握运维现状。
+- 🖥️ **业务系统管理**
+  - 全生命周期管理：主机（CPU/内存/磁盘/OS）、数据库、中间件。
+  - 记录管理部室、运行状态及负责人联系方式。
+- 📋 **运维事件中心**
+  - **精细化流程记录**：支持多步骤处置流程，每个步骤均可记录操作人、操作时间及备注。
+  - **状态追踪**：引入“处置进度”（未解决、已解决、已挂起）与“事件状态”双重维度。
+  - **附件支持**：支持截图、文档上传与下载。
+- 🗓️ **计划任务与提醒**
+  - **多样化周期**：支持一次性、每天、每周（指定周几）、每月（指定日期）、自定义 Cron (基于 croniter)。
 
-> **注意**：如果使用 Python 3.7，请确保使用 `requirements.txt` 中指定的兼容版本。Flask 3.0+ 需要 Python 3.8+。
+  - **通知提醒**：集成钉钉机器人，发送包含任务详情、准备进度、责任人的 Markdown 格式通知。
+  - **准备清单**：可视化准备事项清单（✅/⬜图标），确保任务前置条件完备。
+- 🛡️ **通知审计日志**
+  - 记录每一条系统发出的通知原文、发送状态及错误详情。
+  - 支持全文搜索、时间筛选及批量管理。
+- 👥 **用户与权限管理**
+  - 管理员/普通用户双角色权限控制。
+- ⚙️ **系统配置中心**
+  - 集中管理数据字典（事件类型、严重程度、部室等）。
+  - **机器人中心**：统一维护告警机器人名称与 Webhook 地址，供计划任务调用。
 
-## 快速开始
-### Linux/macOS
-1. 解压发布包（或仓库）：
-```bash
-unzip it-ops-system-linux-v1.0.zip
-cd it-ops-system-linux-v1.0
-```
-2. 安装依赖并初始化：
+## 🚀 快速开始
+
+### 系统要求
+- Python 3.8+
+- SQLite 3 或 MySQL 8.0+
+
+### 部署步骤
+
+#### 1. 获取程序包
+下载并解压最新的发布包 `it-ops-system-linux-v1.3.zip`。
+
+
+#### 2. 环境安装 (Linux)
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
-3. 启动服务：
+安装脚本会自动创建虚拟环境、安装依赖，并生成默认的 `.env` 配置文件。
+
+#### 3. 配置数据库
+系统支持 **SQLite** (默认) 和 **MySQL**。如需使用 MySQL：
+1. 编辑目录下的 `.env` 文件。
+2. 修改 `DATABASE_URI`：
+   ```env
+   DATABASE_URI=mysql+pymysql://user:password@127.0.0.1:3306/it_ops_system?charset=utf8mb4
+   ```
+3. 系统启动时会自动在 MySQL 中初始化所有表结构。
+
+#### 4. 启动服务
 ```bash
+# Linux
 ./start.sh
+
+# Windows 
+python app.py
 ```
-4. 访问：`http://localhost:5000`，默认账号 `admin` / `Flzx3qc@2024`
+- **默认访问地址**：`http://your-ip:5001`
 
-### Windows
-1. 解压发布包
-2. 安装依赖：
-```cmd
-pip install -r requirements.txt
-```
-3. 启动服务：
-```cmd
-start.bat
-```
-或双击 `start.bat`
-4. 访问：`http://localhost:5000`，默认账号 `admin` / `Flzx3qc@2024`
+- **默认管理员**：`admin`
+- **默认密码**：`Flzx3qc@2024`
 
-## 页面与导航
-- 页面切换与刷新：当前菜单会写入 `localStorage.currentPage`，刷新保持所在页；也可通过 `/?page=events`、`/?page=plan-tasks` 等 URL 直达。
-- 登录后首页：登录成功会跳转到 `/?page=dashboard`（事件管理概览）。
+## 📁 目录结构说明
+- `app.py`: 系统核心逻辑、API 接口及数据库自动迁移逻辑。
+- `static/`: 前端资源 (HTML/CSS/JS)。
+- `.env`: 环境变量配置（密钥、数据库连接）。
+- `instance/`: 存储 SQLite 数据库（如果使用 SQLite）。
+- `uploads/`: 事件附件存储目录。
+- `*.sh/*.bat`: 系统启动与管理脚本。
 
-## 目录结构
-```
-it-ops-system/
-├── app.py              # 主程序
-├── requirements.txt    # Python 依赖
-├── install.sh          # Linux 安装脚本
-├── start.sh            # Linux 启动脚本
-├── stop.sh             # Linux 停止脚本
-├── start.bat           # Windows 启动脚本
-├── static/             # 前端静态资源
-│   ├── index.html      # 主页面
-│   ├── login.html      # 登录页面
-│   ├── css/            # 样式
-│   └── js/             # 脚本
-├── instance/           # SQLite 数据库目录
-├── uploads/            # 上传目录
-├── build_linux_package.ps1 # 打包脚本（Windows 环境打 Linux 包）
-└── build_package.bat       # 打包脚本（Windows 环境）
-```
+## 🛠️ 技术栈
+- **后端**: Flask, SQLAlchemy (支持多数据库驱动)
+- **前端**: Vanilla JS (ES6+), Vanilla CSS (现代 UI 设计)
+- **依赖管理**: `python-dotenv` (配置管理), `PyMySQL` (MySQL 驱动)
 
-## 常用命令
-### Linux/macOS
-- 启动：`./start.sh`
-- 停止：`./stop.sh`
-- 重新安装：`./install.sh`
+## 🛡️ 安全与生产建议
+- **修改密钥**：部署后请修改 `.env` 中的 `SECRET_KEY`。
+- **反向代理**：建议在生产环境使用 Nginx 反向代理，并开启 HTTPS。
+- **备份**：如果使用 SQLite，请定期备份 `instance/it_ops.db`；如果使用 MySQL，请定期备份对应数据库。
 
-### Windows
-- 启动：双击 `start.bat` 或 `python app.py`
-- 停止：关闭命令行窗口或 `Ctrl+C`
-
-## 生产环境建议
-1. 修改 `app.py` 中的 `SECRET_KEY`
-2. 生产环境使用 `debug=False`
-3. 配置 Nginx 反向代理与 HTTPS
-4. 建议使用 systemd 配置自启
-
-## 打包
-- Windows 环境执行 `build_linux_package.ps1` 可生成 `it-ops-system-linux-v1.0.zip`（含静态文件和脚本）。
-- 自定义包名可在脚本开头修改 `$PackageName`。
-
-## 故障排除
-- 端口占用：`lsof -i :5000` / `netstat -ano | findstr :5000`
-- 数据库损坏：删除 `instance/it_ops.db`，重启自动重建
-- 权限：`chmod +x *.sh`
-
-## 许可证
-MIT License
+## 📄 许可证
+本项目采用 MIT 许可证。

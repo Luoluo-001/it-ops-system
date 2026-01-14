@@ -39,7 +39,7 @@ mkdir -p instance
 # 启动应用
 echo "========================================"
 echo "启动IT运维管理系统..."
-echo "访问地址: http://localhost:5000"
+echo "访问地址: http://localhost:5001"
 echo "默认账号: admin"
 echo "默认密码: Flzx3qc@2024"
 echo "========================================"

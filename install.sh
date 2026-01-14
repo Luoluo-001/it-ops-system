@@ -89,6 +89,13 @@ mkdir -p uploads
 mkdir -p instance
 echo "✓ 目录创建完成"
 
+# 配置文件
+if [ ! -f ".env" ]; then
+    echo "创建默认配置文件 .env..."
+    cp .env.sample .env
+    echo "✓ .env 配置文件已创建，如需使用 MySQL 请修改此文件"
+fi
+
 # 设置执行权限
 chmod +x start.sh
 chmod +x stop.sh
@@ -101,7 +108,7 @@ echo ""
 echo "启动命令: ./start.sh"
 echo "停止命令: ./stop.sh"
 echo ""
-echo "访问地址: http://localhost:5000"
+echo "访问地址: http://localhost:5001"
 echo "默认账号: admin"
 echo "默认密码: Flzx3qc@2024"
 echo ""

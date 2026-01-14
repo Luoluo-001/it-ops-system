@@ -1,14 +1,27 @@
-from flask import Flask, request, jsonify, send_from_directory, session
+from flask import Flask, request, jsonify, send_from_directory, session, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from sqlalchemy import inspect, text
-
+import io
 import os
+
 import threading
 import json
 import urllib.request
 from werkzeug.utils import secure_filename
+try:
+    from croniter import croniter
+except ImportError:
+    croniter = None
+try:
+    from dotenv import load_dotenv
+
+    # 加载环境变量
+    load_dotenv()
+except ImportError:
+    print("Warning: python-dotenv not installed, skipping .env loading")
+
 
 
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -19,7 +32,7 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 
 
 # 配置密钥（固定密钥，避免重启后session失效）
-app.config['SECRET_KEY'] = 'flzx-it-ops-system-2024-secret-key-do-not-change'
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'flzx-it-ops-system-2024-secret-key-do-not-change')
 
 # Session配置（简化配置，使用默认值）
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -30,7 +43,11 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24小时
 # CORS(app, supports_credentials=True)
 
 # 配置数据库
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///it_ops.db'
+# 优先从环境变量读取数据库URI，支持MySQL和SQLite
+# MySQL格式: mysql+pymysql://user:password@host:port/dbname
+# SQLite格式: sqlite:///it_ops.db
+default_db_path = os.path.join(app.root_path, 'instance', 'it_ops.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI', f'sqlite:///{default_db_path}')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
@@ -106,8 +123,10 @@ class Event(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     resolved_at = db.Column(db.DateTime)  # 解决时间
     closed_at = db.Column(db.DateTime)  # 关闭时间
+    progress_status = db.Column(db.String(20), default='未解决') # 处置进度: 未解决, 已解决, 已挂起
     
     processes = db.relationship('EventProcess', backref='event', lazy=True, cascade='all, delete-orphan')
+
     attachments = db.relationship('EventAttachment', backref='event', lazy=True, cascade='all, delete-orphan')
 
 class EventProcess(db.Model):
@@ -204,6 +223,21 @@ class PlanTaskPreparation(db.Model):
     estimated_minutes = db.Column(db.Integer)
     order_no = db.Column(db.Integer, default=1)
 
+class NotificationAudit(db.Model):
+    """通知审计日志表"""
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('plan_task.id'), nullable=True)
+    task_title = db.Column(db.String(200))
+    robot_name = db.Column(db.String(100))
+    webhook_url = db.Column(db.String(500))
+    msg_type = db.Column(db.String(20), default='markdown')
+    title = db.Column(db.String(200))
+    content = db.Column(db.Text)
+    status = db.Column(db.String(20))  # 成功/失败
+    error_msg = db.Column(db.Text)
+    sent_at = db.Column(db.DateTime, default=datetime.now)
+
+
 
 def ensure_plan_task_schema():
     """确保计划任务相关表和字段存在（兼容旧版SQLite数据库）。"""
@@ -219,6 +253,9 @@ def ensure_plan_task_schema():
             PlanTask.__table__.create(db.engine, checkfirst=True)
         if 'plan_task_preparation' not in table_names:
             PlanTaskPreparation.__table__.create(db.engine, checkfirst=True)
+        if 'notification_audit' not in table_names:
+            NotificationAudit.__table__.create(db.engine, checkfirst=True)
+
 
         # 补齐 plan_task 缺失字段
         inspector = inspect(db.engine)
@@ -259,6 +296,28 @@ def ensure_plan_task_schema():
                 with db.engine.begin() as conn:
                     conn.exec_driver_sql(f"ALTER TABLE system_host ADD COLUMN {col} {ddl}")
 
+        # 补齐 event 缺失字段
+        event_cols = {col['name'] for col in inspector.get_columns('event')}
+        event_column_defs = {
+            'progress_status': "VARCHAR(20) DEFAULT '未解决'",
+            'event_category': "VARCHAR(50)",
+            'system_name': "VARCHAR(100)"
+        }
+        for col, ddl in event_column_defs.items():
+            if col not in event_cols:
+                with db.engine.begin() as conn:
+                    conn.exec_driver_sql(f"ALTER TABLE event ADD COLUMN {col} {ddl}")
+
+        # 补齐 event_process 缺失字段
+        process_cols = {col['name'] for col in inspector.get_columns('event_process')}
+        process_column_defs = {
+            'operated_at': "DATETIME DEFAULT CURRENT_TIMESTAMP"
+        }
+        for col, ddl in process_column_defs.items():
+            if col not in process_cols:
+                with db.engine.begin() as conn:
+                    conn.exec_driver_sql(f"ALTER TABLE event_process ADD COLUMN {col} {ddl}")
+
 
 
 
@@ -273,18 +332,23 @@ def bootstrap_schema():
         if schema_bootstrapped:
             return
         ensure_plan_task_schema()
-        
-        # 启动后台提醒线程
-        reminder_thread = threading.Thread(target=background_reminder_worker, daemon=True)
-        reminder_thread.start()
-        
         schema_bootstrapped = True
-
 
 app.before_request(bootstrap_schema)
 
+# 在应用启动时立即开启后台线程
+def start_background_worker():
+    # 避免在 Flask debug 模式下启动两次
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+        with app.app_context():
+            reminder_thread = threading.Thread(target=background_reminder_worker, daemon=True)
+            reminder_thread.start()
+            print(">>> 计划任务提醒后台服务已成功启动")
+
 
 def send_dingtalk_notification(webhook_url, message, title=None):
+
+
     """发送钉钉通知 (支持 Markdown 格式)"""
     if not webhook_url:
         return False, "Webhook URL为空"
@@ -328,26 +392,138 @@ def send_dingtalk_notification(webhook_url, message, title=None):
 
 
 
+def calculate_next_run_time(current_plan_time, schedule_type, schedule_value=None, base_time=None):
+    """根据周期类型计算下一次执行时间"""
+    if schedule_type == 'once':
+        return None
+    
+    if base_time is None:
+        base_time = datetime.now()
+    
+    next_time = current_plan_time
+
+    if schedule_type == 'daily':
+        # 如果当前计划时间已经过了（或等于基准时间），加一天
+        while next_time <= base_time:
+            next_time += timedelta(days=1)
+            
+    elif schedule_type == 'weekly':
+        try:
+            target_weekday = int(schedule_value) # 0-6 (Mon-Sun)
+        except (ValueError, TypeError):
+            target_weekday = 0
+            
+        # 调整到目标星期
+        days_ahead = target_weekday - next_time.weekday()
+        if days_ahead < 0:
+            days_ahead += 7
+        next_time += timedelta(days=days_ahead)
+        
+        # 如果调整后还是过去的时间（或等于基准时间），则加一周
+        while next_time <= base_time:
+            next_time += timedelta(weeks=1)
+            
+    elif schedule_type == 'monthly':
+        try:
+            target_day = int(schedule_value) # 1-31
+        except (ValueError, TypeError):
+            target_day = 1
+            
+        import calendar
+        # 调整到目标日期
+        month = next_time.month
+        year = next_time.year
+        last_day = calendar.monthrange(year, month)[1]
+        actual_day = min(target_day, last_day)
+        next_time = next_time.replace(day=actual_day)
+        
+        # 如果调整后还是过去的时间（或等于基准时间），则增加月份
+        while next_time <= base_time:
+            month = next_time.month + 1
+            year = next_time.year
+            if month > 12:
+                month = 1
+                year += 1
+            last_day = calendar.monthrange(year, month)[1]
+            actual_day = min(target_day, last_day)
+            next_time = next_time.replace(year=year, month=month, day=actual_day)
+            
+    elif schedule_type == 'cron':
+        if croniter and schedule_value:
+            try:
+                iter = croniter(schedule_value, base_time)
+                return iter.get_next(datetime)
+            except Exception as e:
+                print(f"DEBUG: Cron解析异常: {str(e)}")
+                return next_time
+        return next_time
+
+        
+    return next_time
+
+
+
 def background_reminder_worker():
     """后台提醒检查线程"""
     import time
     with app.app_context():
-        print("计划任务提醒后台线程已启动")
+        # 获取并打印服务器时间与时区偏移，辅助排查 Linux 触发问题
+        import datetime as dt
+        local_now = dt.datetime.now()
+        utc_now = dt.datetime.utcnow()
+        tz_offset = (local_now - utc_now).total_seconds() / 3600
+        print(f"计划任务提醒后台线程已启动 (服务器时间: {local_now.strftime('%Y-%m-%d %H:%M:%S')}, 时区偏移: UTC{tz_offset:+.1f})")
+        
         while True:
             try:
+                # 显式清理 Session，确保读取最新数据库数据
+                db.session.remove()
                 now = datetime.now()
-                # 检查所有待执行且开启提醒且未发送提醒的任务
+                # 检查所有 待执行/进行中 且开启提醒且未发送提醒的任务
                 tasks = PlanTask.query.filter(
-                    PlanTask.status == '待执行',
+                    PlanTask.status.in_(['待执行', '进行中']),
                     PlanTask.reminder_enabled == True,
                     PlanTask.reminder_sent == False
                 ).all()
                 
+                if tasks:
+                    print(f"DEBUG: 后台扫描到 {len(tasks)} 条待提醒任务 (当前时间: {now.strftime('%H:%M:%S')})")
+                
                 for task in tasks:
+                    current_webhook = task.webhook_url
+                    
+                    # 兜底：如果数据库里没存 Webhook，但存了机器人名称，尝试实时从配置中读取
+                    if not current_webhook and task.alert_robot:
+                        robot_config = SystemConfig.query.filter_by(config_key='alert_robots').first()
+                        if robot_config:
+                            try:
+                                robots = json.loads(robot_config.config_value)
+                                for r in robots:
+                                    if r.get('name') == task.alert_robot:
+                                        current_webhook = r.get('webhook')
+                                        break
+                            except:
+                                pass
+
+                    # 计算提醒时间点
                     reminder_time = task.plan_time - timedelta(minutes=task.reminder_minutes)
+                    
+                    # 打印调试日志，检查时间逻辑
+                    # print(f"DEBUG: 任务[{task.title}] 计划:{task.plan_time}, 提醒:{reminder_time}, 当前:{now}")
+                    
                     # 如果当前时间到达或超过提醒时间
                     if reminder_time <= now <= task.plan_time + timedelta(hours=1):
+                        print(f"DEBUG: 任务[{task.title}] 满足时间条件 (提醒点:{reminder_time.strftime('%H:%M:%S')}, 计划:{task.plan_time.strftime('%H:%M:%S')})")
+                        
+                        if not current_webhook:
+                            print(f"DEBUG: 任务[{task.title}] 满足条件但无法获取 Webhook，标记为已处理以避免死循环")
+                            task.reminder_sent = True
+                            db.session.commit()
+                            continue
+
+                        print(f"DEBUG: 任务[{task.title}] 准备发送通知...")
                         # 准备模板变量
+
                         preps = task.preparations
                         completed_count = len([p for p in preps if p.status == '已完成'])
                         prep_text_list = []
@@ -389,25 +565,69 @@ def background_reminder_worker():
                                         f"💡 **提醒详情**:\n\n> {safe_message}"
 
                         
-                        webhook_url = task.webhook_url
+                        webhook_url = current_webhook
                         if webhook_url:
+                            print(f"DEBUG: 正在向 {webhook_url} 发送通知")
                             success, msg = send_dingtalk_notification(webhook_url, markdown_text, title=markdown_title)
 
+                            
+                            # 记录审计日志
+                            audit = NotificationAudit(
+                                task_id=task.id,
+                                task_title=task.title,
+                                robot_name=task.alert_robot,
+                                webhook_url=webhook_url,
+                                msg_type='markdown',
+                                title=markdown_title,
+                                content=markdown_text,
+                                status='成功' if success else '失败',
+                                error_msg=None if success else msg
+                            )
+                            db.session.add(audit)
+                            
                             if success:
+                                print(f"DEBUG: 通知发送成功")
+                                # 处理周期性逻辑
+                                if task.schedule_type == 'once':
+                                    task.reminder_sent = True
+                                else:
+                                    # 使用 task.plan_time 作为基准，强制计算“下一个”周期
+                                    next_run = calculate_next_run_time(task.plan_time, task.schedule_type, task.schedule_value, base_time=task.plan_time)
+                                    if next_run:
+
+                                        print(f"DEBUG: 周期任务[{task.title}]，更新计划时间从 {task.plan_time} 到 {next_run}")
+                                        task.plan_time = next_run
+                                        task.reminder_sent = False 
+                                    else:
+                                        task.reminder_sent = True
+                                db.session.commit()
+                            else:
+                                print(f"DEBUG: 通知发送失败: {msg}")
+                                # 即使失败也标记为已发送，防止阻塞
                                 task.reminder_sent = True
                                 db.session.commit()
                         else:
-                            # 标记为已尝试，避免重复日志，或者就在日志里提醒
+                            print(f"DEBUG: 任务[{task.title}] 未配置 Webhook，标记为已处理")
                             task.reminder_sent = True
                             db.session.commit()
+
                 
             except Exception as e:
+                print(f"ERROR: 后台提醒线程异常: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 db.session.rollback()
+
             
             time.sleep(60)
 
+# 启动后台工作线程
+start_background_worker()
+
+
 
 # ==================== API接口 ====================
+
 
 
 
@@ -710,7 +930,97 @@ def get_business_systems():
         }
     })
 
+@app.route('/api/business-systems/export', methods=['POST'])
+@login_required
+def export_business_systems():
+    """导出业务系统到 Excel"""
+    data = request.json
+    ids = data.get('ids', [])
+    
+    query = BusinessSystem.query
+    if ids:
+        query = query.filter(BusinessSystem.id.in_(ids))
+    
+    systems = query.all()
+    
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill
+    except ImportError:
+        return jsonify({'code': -1, 'message': '未安装 openpyxl 库，无法导出'}), 500
+        
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "业务系统清单"
+    
+    # 定义表头
+    headers = [
+        "系统名称", "系统代码", "状态", "管理部室", "部室状态", 
+        "数据库类型", "数据库版本", "负责人", "联系电话", "联系邮箱", 
+        "系统描述", "主机信息", "中间件信息", "创建时间"
+    ]
+    
+    # 设置样式
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+    alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = alignment
+        
+    # 填充数据
+    for row, sys in enumerate(systems, 2):
+        # 格式化主机信息
+        hosts_str = "\n".join([
+            f"[{h.host_type}] {h.ip_address} ({h.os_version or '-'}, {h.cpu_cores or '-'}核/{h.memory_gb or '-'}GB/{h.disk_gb or '-'}GB)"
+            for h in sys.hosts
+        ])
+        
+        # 格式化中间件信息
+        mws_str = "\n".join([
+            f"{m.middleware_type} {m.middleware_version or ''} (数量: {m.quantity})"
+            for m in sys.middlewares
+        ])
+        
+        ws.cell(row=row, column=1, value=sys.system_name)
+        ws.cell(row=row, column=2, value=sys.system_code)
+        ws.cell(row=row, column=3, value=sys.status)
+        ws.cell(row=row, column=4, value=sys.department)
+        ws.cell(row=row, column=5, value=sys.department_status)
+        ws.cell(row=row, column=6, value=sys.database)
+        ws.cell(row=row, column=7, value=sys.database_version)
+        ws.cell(row=row, column=8, value=sys.contact_person)
+        ws.cell(row=row, column=9, value=sys.contact_phone)
+        ws.cell(row=row, column=10, value=sys.contact_email)
+        ws.cell(row=row, column=11, value=sys.description)
+        ws.cell(row=row, column=12, value=hosts_str).alignment = Alignment(wrap_text=True)
+        ws.cell(row=row, column=13, value=mws_str).alignment = Alignment(wrap_text=True)
+        ws.cell(row=row, column=14, value=sys.created_at.strftime('%Y-%m-%d %H:%M:%S') if sys.created_at else "")
+        
+    # 设置列宽
+    column_widths = [25, 15, 10, 20, 15, 15, 15, 15, 15, 20, 30, 50, 40, 20]
+    for i, width in enumerate(column_widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = width
+
+    # 保存到内存流
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    filename = f"business_systems_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+    
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
+
 @app.route('/api/business-systems', methods=['POST'])
+
 @login_required
 def create_business_system():
     """创建业务系统"""
@@ -851,7 +1161,9 @@ def get_events():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
     system_name = request.args.get('system_name', '')
+    title = request.args.get('title', '')
     status = request.args.get('status', '')
+    progress_status = request.args.get('progress_status', '')
     event_type = request.args.get('event_type', '')
     severity = request.args.get('severity', '')
     start_date = request.args.get('start_date', '')
@@ -861,10 +1173,15 @@ def get_events():
     
     if system_name:
         query = query.filter(Event.system_name.contains(system_name))
+    if title:
+        query = query.filter(Event.title.contains(title))
     if status:
         query = query.filter_by(status=status)
+    if progress_status:
+        query = query.filter_by(progress_status=progress_status)
     if event_type:
         query = query.filter_by(event_type=event_type)
+
     if severity:
         query = query.filter_by(severity=severity)
     if start_date:
@@ -889,11 +1206,13 @@ def get_events():
                 'status': event.status,
                 'title': event.title,
                 'description': event.description,
-                'occurred_at': event.occurred_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'occurred_at': event.occurred_at.strftime('%Y-%m-%d %H:%M:%S') if event.occurred_at else None,
                 'reported_by': event.reported_by,
                 'assigned_to': event.assigned_to,
-                'created_at': event.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                'progress_status': event.progress_status,
+                'created_at': event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else None
             } for event in pagination.items],
+
             'total': pagination.total,
             'page': page,
             'per_page': per_page
@@ -919,11 +1238,13 @@ def get_event_detail(id):
             'status': event.status,
             'title': event.title,
             'description': event.description,
-            'occurred_at': event.occurred_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'occurred_at': event.occurred_at.strftime('%Y-%m-%d %H:%M:%S') if event.occurred_at else None,
             'reported_by': event.reported_by,
             'assigned_to': event.assigned_to,
+            'progress_status': event.progress_status,
             'resolution': event.resolution,
             'root_cause': event.root_cause,
+
             'resolved_at': event.resolved_at.strftime('%Y-%m-%d %H:%M:%S') if event.resolved_at else None,
             'closed_at': event.closed_at.strftime('%Y-%m-%d %H:%M:%S') if event.closed_at else None,
             'processes': [{
@@ -932,7 +1253,7 @@ def get_event_detail(id):
                 'action': p.action,
                 'result': p.result,
                 'operator': p.operator,
-                'operated_at': p.operated_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'operated_at': p.operated_at.strftime('%Y-%m-%d %H:%M:%S') if p.operated_at else None,
                 'remarks': p.remarks
             } for p in event.processes],
             'attachments': [{
@@ -967,15 +1288,17 @@ def create_event():
         system_id=data['system_id'],
         system_name=system.system_name,
         event_type=data['event_type'],
-        event_category=data.get('event_category'),
         severity=data.get('severity'),
+
         status=data.get('status', '处理中'),
         title=data['title'],
         description=data.get('description'),
         occurred_at=datetime.fromisoformat(data['occurred_at']),
         reported_by=data.get('reported_by'),
         assigned_to=data.get('assigned_to'),
+        progress_status=data.get('progress_status', '未解决'),
         resolution=data.get('resolution'),
+
         root_cause=data.get('root_cause')
     )
     
@@ -991,7 +1314,9 @@ def create_event():
                 action=process_data['action'],
                 result=process_data.get('result'),
                 operator=process_data.get('operator'),
+                operated_at=datetime.fromisoformat(process_data.get('operated_at')) if process_data.get('operated_at') else datetime.now(),
                 remarks=process_data.get('remarks')
+
             )
             db.session.add(process)
     
@@ -1016,9 +1341,8 @@ def update_event(id):
     
     if 'event_type' in data:
         event.event_type = data['event_type']
-    if 'event_category' in data:
-        event.event_category = data['event_category']
     if 'severity' in data:
+
         event.severity = data['severity']
     if 'status' in data:
         event.status = data['status']
@@ -1036,8 +1360,11 @@ def update_event(id):
         event.reported_by = data['reported_by']
     if 'assigned_to' in data:
         event.assigned_to = data['assigned_to']
+    if 'progress_status' in data:
+        event.progress_status = data['progress_status']
     if 'resolution' in data:
         event.resolution = data['resolution']
+
     if 'root_cause' in data:
         event.root_cause = data['root_cause']
     
@@ -1054,7 +1381,9 @@ def update_event(id):
                 action=process_data['action'],
                 result=process_data.get('result'),
                 operator=process_data.get('operator'),
+                operated_at=datetime.fromisoformat(process_data.get('operated_at')) if process_data.get('operated_at') else datetime.now(),
                 remarks=process_data.get('remarks')
+
             )
             db.session.add(process)
     
@@ -1360,7 +1689,70 @@ def get_plan_task(task_id):
     task = PlanTask.query.get_or_404(task_id)
     return jsonify({'code': 0, 'data': serialize_plan_task(task)})
 
+@app.route('/api/notification-audits', methods=['GET'])
+@login_required
+def get_notification_audits():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 15, type=int)
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    task_title = request.args.get('task_title')
+    
+    query = NotificationAudit.query
+    
+    if start_date:
+        query = query.filter(NotificationAudit.sent_at >= datetime.strptime(start_date, '%Y-%m-%d'))
+    if end_date:
+        # 包含结束当天
+        query = query.filter(NotificationAudit.sent_at <= datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1))
+    if task_title:
+        query = query.filter(NotificationAudit.task_title.like(f"%{task_title}%"))
+        
+    pagination = query.order_by(NotificationAudit.sent_at.desc()).paginate(page=page, per_page=per_page)
+    
+    audits = []
+    for audit in pagination.items:
+        audits.append({
+            'id': audit.id,
+            'task_id': audit.task_id,
+            'task_title': audit.task_title,
+            'robot_name': audit.robot_name,
+            'webhook_url': audit.webhook_url,
+            'msg_type': audit.msg_type,
+            'title': audit.title,
+            'content': audit.content,
+            'status': audit.status,
+            'error_msg': audit.error_msg,
+            'sent_at': audit.sent_at.strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    return jsonify({
+        'code': 0,
+        'data': audits,
+        'total': pagination.total,
+        'pages': pagination.pages,
+        'current_page': pagination.page
+    })
+
+@app.route('/api/notification-audits/bulk-delete', methods=['POST'])
+@admin_required
+def bulk_delete_notification_audits():
+    """批量删除通知审计记录"""
+    data = request.json
+    ids = data.get('ids', [])
+    if not ids:
+        return jsonify({'code': -1, 'message': '请选择要删除的记录'})
+    
+    try:
+        NotificationAudit.query.filter(NotificationAudit.id.in_(ids)).delete(synchronize_session=False)
+        db.session.commit()
+        return jsonify({'code': 0, 'message': f'成功删除 {len(ids)} 条记录'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'code': -1, 'message': f'删除失败: {str(e)}'})
+
 @app.route('/api/plan-tasks/test-notification', methods=['POST'])
+
 @login_required
 def test_plan_task_notification():
     data = request.json
@@ -1420,14 +1812,29 @@ def test_plan_task_notification():
 
 
     success, msg = send_dingtalk_notification(webhook_url, markdown_text, title=markdown_title)
-
+    
+    # 记录测试通知审计日志
+    audit = NotificationAudit(
+        task_id=data.get('id'), # 如果是新建任务可能没有ID
+        task_title=title,
+        robot_name=data.get('alert_robot', '测试机器人'),
+        webhook_url=webhook_url,
+        msg_type='markdown',
+        title=markdown_title,
+        content=markdown_text,
+        status='成功' if success else '失败',
+        error_msg=None if success else msg
+    )
+    db.session.add(audit)
+    db.session.commit()
+    
     if success:
+
         return jsonify({'code': 0, 'message': msg})
     else:
         return jsonify({'code': -1, 'message': msg})
 
 @app.route('/api/plan-tasks', methods=['POST'])
-
 @login_required
 def create_plan_task():
     data = request.json
@@ -1436,7 +1843,21 @@ def create_plan_task():
     except (KeyError, ValueError):
         return jsonify({'code': -1, 'message': '计划时间格式不正确'}), 400
     
+    # 打印创建日志，检查 webhook 是否传入
+    print(f"DEBUG: 创建任务 - Robot: {data.get('alert_robot')}, Webhook: {data.get('webhook_url')}")
+    
+    if data.get('schedule_type') in ['daily', 'weekly', 'monthly', 'cron']:
+        plan_time = calculate_next_run_time(plan_time, data.get('schedule_type'), data.get('schedule_value'))
+
+        # 回退一个周期，因为 calculate_next_run_time 总是寻找“下一个”
+        # 但如果是新创建，我们可能希望如果是“今天的10点”且现在是9点，就用今天。
+        # 修正：重新逻辑处理，如果 plan_time 本身就是未来的且符合要求，则不应强制跳到下一个。
+        # 我已经把 calculate_next_run_time 改为只要 next_time <= now 就循环。
+        # 这意味着如果传入的是“今天10点”且现在是9点，它不会进入循环，返回的就是今天10点。这符合预期。
+    
     task = PlanTask(
+
+
         title=data.get('title'),
         task_type=data.get('task_type', '其他'),
         schedule_type=data.get('schedule_type', 'once'),
@@ -1490,7 +1911,12 @@ def update_plan_task(task_id):
     if 'plan_time' in data:
         try:
             new_plan_time = datetime.fromisoformat(data['plan_time'])
+            if task.schedule_type in ['daily', 'weekly', 'monthly', 'cron']:
+                new_plan_time = calculate_next_run_time(new_plan_time, task.schedule_type, task.schedule_value)
+
+            
             if new_plan_time != task.plan_time:
+
                 task.plan_time = new_plan_time
                 task.reminder_sent = False # 重置提醒状态
         except ValueError:
@@ -1502,10 +1928,13 @@ def update_plan_task(task_id):
 
     if 'reminder_enabled' in data:
         task.reminder_enabled = data['reminder_enabled']
+    
+    # 强制更新 Webhook URL，确保即使前端传空（如果配置里有）也能存入
     if 'alert_robot' in data:
         task.alert_robot = data['alert_robot']
     if 'webhook_url' in data:
         task.webhook_url = data['webhook_url']
+
     if 'reminder_message' in data:
         task.reminder_message = data['reminder_message']
 
@@ -1955,4 +2384,5 @@ def init_database():
 
 if __name__ == '__main__':
     init_database()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5001)
+

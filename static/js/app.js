@@ -254,7 +254,8 @@ async function handleLogout(e) {
 // 显示页面
 function showPage(pageName) {
     // 权限检查
-    const adminPages = ['users', 'config'];
+    const adminPages = ['users', 'config', 'notification-audits'];
+
     if (adminPages.includes(pageName)) {
         const roleEl = document.getElementById("header-role");
         const role = roleEl ? roleEl.textContent : '';
@@ -264,31 +265,43 @@ function showPage(pageName) {
         }
     }
 
-    // 更新导航激活状态
-
-    document.querySelectorAll(".nav-item").forEach(item => {
-        item.classList.remove("active");
-        if (item.getAttribute("data-page") === pageName) {
-            item.classList.add("active");
-        }
-    });
-    
-    // 显示对应页面
-    document.querySelectorAll(".page").forEach(page => {
-        page.style.display = "none";
-    });
-    
-    const targetPage = document.getElementById(`${pageName}-page`);
-    if (targetPage) {
-        targetPage.style.display = "block";
-        currentPage = pageName;
-        localStorage.setItem('currentPage', pageName);
-        
-        // 加载页面数据
-        loadPageData(pageName);
-    } else if (pageName !== 'dashboard') {
-        showPage('dashboard');
+    const transition = document.getElementById('page-transition');
+    if (transition) {
+        transition.classList.add('active');
     }
+
+    setTimeout(() => {
+        // 更新导航激活状态
+        document.querySelectorAll(".nav-item").forEach(item => {
+            item.classList.remove("active");
+            if (item.getAttribute("data-page") === pageName) {
+                item.classList.add("active");
+            }
+        });
+        
+        // 显示对应页面
+        document.querySelectorAll(".page").forEach(page => {
+            page.style.display = "none";
+        });
+        
+        const targetPage = document.getElementById(`${pageName}-page`);
+        if (targetPage) {
+            targetPage.style.display = "block";
+            currentPage = pageName;
+            localStorage.setItem('currentPage', pageName);
+            
+            // 加载页面数据
+            loadPageData(pageName);
+        } else if (pageName !== 'dashboard') {
+            showPage('dashboard');
+        }
+
+        if (transition) {
+            setTimeout(() => {
+                transition.classList.remove('active');
+            }, 200);
+        }
+    }, 250);
 }
 
 
@@ -314,6 +327,10 @@ function loadPageData(pageName) {
         case "config":
             loadConfigs();
             break;
+        case "notification-audits":
+            loadNotificationAudits();
+            break;
+
 
     }
 }
@@ -634,7 +651,9 @@ function renderRecentEvents(events) {
             <td>${event.event_type}</td>
             <td><span class="status-badge ${getSeverityClass(event.severity)}">${event.severity}</span></td>
             <td><span class="status-badge ${getStatusClass(event.status)}">${event.status}</span></td>
+            <td><span class="status-badge ${event.progress_status === '已解决' ? 'success' : event.progress_status === '已挂起' ? 'warning' : 'primary'}">${event.progress_status || "未解决"}</span></td>
             <td>${event.occurred_at}</td>
+
         </tr>
     `).join("");
 }
@@ -861,8 +880,14 @@ function populateAlertRobotSelect(activeName = "") {
     select.innerHTML = options.join("");
     if (activeName) {
         select.value = activeName;
+    } else {
+        // 如果没有选中的机器人，且有配置，默认选第一个
+        if (robots.length > 0) {
+            select.value = robots[0].name;
+        }
     }
 }
+
 
 function maskWebhook(webhook = "") {
     if (!webhook) return "";
@@ -939,24 +964,27 @@ function renderBusinessSystemsTable(systems) {
     const tbody = document.getElementById("systems-table-body");
     if (!tbody) return;
     
+    // 重置全选框
+    const selectAll = document.getElementById("systems-select-all");
+    if (selectAll) selectAll.checked = false;
+
     tbody.innerHTML = systems.map(sys => {
-        // 渲染IP地址列表：使用胶囊样式，多个自适应平铺
+        // ... (保持原有逻辑)
         const ipList = (sys.hosts || []).map(h => 
             `<span class="pill pill-soft" style="font-size: 11px; margin: 2px; padding: 2px 6px; background: rgba(99, 102, 241, 0.1); color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.2);">${h.ip_address || "-"}</span>`
         ).join("");
         
-        // 渲染中间件列表：显示类型+版本
         const mwList = (sys.middlewares || []).map(m => 
             `<div style="font-size: 11px; color: #64748b; line-height: 1.4;">${m.middleware_type || "-"}${m.middleware_version ? `(${m.middleware_version})` : ""}</div>`
         ).join("");
 
-        // 主机概览信息
         const hostSummary = sys.hosts && sys.hosts.length > 0 
             ? `<div style="font-size: 12px; font-weight: 600; color: #1e293b;">${sys.hosts.length} 台主机</div>`
             : '<span style="color: #cbd5e1;">-</span>';
 
         return `
         <tr>
+            <td style="text-align: center;"><input type="checkbox" class="system-checkbox" value="${sys.id}"></td>
             <td style="font-weight: 600; color: #1e293b;">${sys.system_name}</td>
             <td>${hostSummary}</td>
             <td><div style="display: flex; flex-wrap: wrap; max-width: 250px;">${ipList || "-"}</div></td>
@@ -978,6 +1006,53 @@ function renderBusinessSystemsTable(systems) {
     `;
     }).join("");
 }
+
+// 全选/取消全选
+function toggleSelectAllSystems(checkbox) {
+    const checkboxes = document.querySelectorAll(".system-checkbox");
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+}
+
+// 导出Excel
+async function exportSystems() {
+    const selectedIds = Array.from(document.querySelectorAll(".system-checkbox:checked")).map(cb => parseInt(cb.value));
+    
+    if (selectedIds.length === 0) {
+        if (!confirm("未勾选任何系统，是否导出当前筛选条件下的全部系统信息？")) {
+            return;
+        }
+    }
+
+    try {
+        showToast("正在生成导出文件...", "info");
+        
+        const response = await apiFetch(`${API_BASE}/business-systems/export`, {
+            method: "POST",
+            body: JSON.stringify({ ids: selectedIds })
+        });
+
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            const filename = `业务系统导出_${new Date().toISOString().slice(0, 10)}.xlsx`;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            showToast("导出成功", "success");
+        } else {
+            const result = await response.json();
+            showToast(result.message || "导出失败", "error");
+        }
+    } catch (error) {
+        console.error("导出失败:", error);
+        showToast("导出失败，请重试", "error");
+    }
+}
+
 
 function showSystemDialog(systemId = null) {
     currentSystemId = systemId;
@@ -1399,16 +1474,22 @@ async function deleteSystem(systemId) {
 async function loadEvents(page = 1) {
     try {
         const systemName = document.getElementById("event-system-name")?.value || "";
+        const title = document.getElementById("event-title-filter")?.value || "";
         const status = document.getElementById("event-status-filter")?.value || "";
         const startDate = document.getElementById("event-start-date")?.value || "";
         const endDate = document.getElementById("event-end-date")?.value || "";
         const eventType = document.getElementById("event-type-filter")?.value || "";
         const severity = document.getElementById("event-severity-filter")?.value || "";
+        const progressStatus = document.getElementById("event-progress-filter")?.value || "";
         
         let url = `${API_BASE}/events?page=${page}&per_page=10`;
         if (systemName) url += `&system_name=${encodeURIComponent(systemName)}`;
+        if (title) url += `&title=${encodeURIComponent(title)}`;
         if (status) url += `&status=${encodeURIComponent(status)}`;
+        if (progressStatus) url += `&progress_status=${encodeURIComponent(progressStatus)}`;
+
         if (eventType) url += `&event_type=${encodeURIComponent(eventType)}`;
+
         if (severity) url += `&severity=${encodeURIComponent(severity)}`;
         if (startDate) url += `&start_date=${startDate}T00:00:00`;
         if (endDate) url += `&end_date=${endDate}T23:59:59`;
@@ -1438,7 +1519,9 @@ function renderEventsTable(events) {
             <td>${event.event_type}</td>
             <td><span class="status-badge ${getSeverityClass(event.severity)}">${event.severity}</span></td>
             <td><span class="status-badge ${getStatusClass(event.status)}">${event.status}</span></td>
+            <td><span class="status-badge ${event.progress_status === '已解决' ? 'success' : event.progress_status === '已挂起' ? 'warning' : 'primary'}">${event.progress_status || "未解决"}</span></td>
             <td>${event.occurred_at}</td>
+
             <td>${event.reported_by || "-"}</td>
             <td>
                 <button class="btn-action" onclick="editEvent(${event.id})">编辑</button>
@@ -1519,14 +1602,16 @@ async function loadEventData(eventId) {
             document.getElementById("event-occurred-at").value = localDateTime;
             
             document.getElementById("event-type").value = event.event_type;
-            document.getElementById("event-category").value = event.event_category || "";
             document.getElementById("event-severity").value = event.severity;
+
             document.getElementById("event-status").value = event.status;
             document.getElementById("event-reported-by").value = event.reported_by || "";
             document.getElementById("event-assigned-to").value = event.assigned_to || "";
             document.getElementById("event-title").value = event.title;
             document.getElementById("event-description").value = event.description || "";
+            document.getElementById("event-progress-status").value = event.progress_status || "未解决";
             document.getElementById("event-resolution").value = event.resolution || "";
+
             document.getElementById("event-root-cause").value = event.root_cause || "";
             
             // 加载处置流程
@@ -1560,6 +1645,23 @@ function addProcessStep(processData = null) {
             <span class="process-step-remove" onclick="removeProcessStep(${processStepCounter})">×</span>
         </div>
         <div class="form-row">
+            <div class="form-group">
+                <label>操作时间</label>
+                <input type="datetime-local" class="process-time" value="${processData?.operated_at ? processData.operated_at.replace(' ', 'T').substring(0, 16) : new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}" />
+            </div>
+            <div class="form-group">
+                <label>操作人</label>
+                <input type="text" class="process-operator" placeholder="操作人" value="${processData?.operator || ""}" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group full-width">
+                <label>备注</label>
+                <input type="text" class="process-remarks" placeholder="备注信息" value="${processData?.remarks || ""}" />
+            </div>
+        </div>
+
+        <div class="form-row">
             <div class="form-group full-width">
                 <label>处置动作</label>
                 <input type="text" class="process-action" placeholder="描述具体的处置动作" value="${processData?.action || ""}" />
@@ -1571,16 +1673,7 @@ function addProcessStep(processData = null) {
                 <textarea class="process-result" rows="2" placeholder="处置后的结果">${processData?.result || ""}</textarea>
             </div>
         </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>操作人</label>
-                <input type="text" class="process-operator" placeholder="操作人" value="${processData?.operator || ""}" />
-            </div>
-            <div class="form-group">
-                <label>备注</label>
-                <input type="text" class="process-remarks" placeholder="备注信息" value="${processData?.remarks || ""}" />
-            </div>
-        </div>
+
     `;
     
     processList.appendChild(stepDiv);
@@ -1670,24 +1763,28 @@ async function saveEvent() {
                 action: action,
                 result: step.querySelector(".process-result").value,
                 operator: step.querySelector(".process-operator").value,
+                operated_at: step.querySelector(".process-time").value,
                 remarks: step.querySelector(".process-remarks").value
             });
         }
+
     });
     
     const data = {
         system_id: parseInt(document.getElementById("event-system-id").value),
         occurred_at: document.getElementById("event-occurred-at").value,
         event_type: document.getElementById("event-type").value,
-        event_category: document.getElementById("event-category").value,
         severity: document.getElementById("event-severity").value,
         status: document.getElementById("event-status").value,
+
         reported_by: document.getElementById("event-reported-by").value,
         assigned_to: document.getElementById("event-assigned-to").value,
         title: document.getElementById("event-title").value,
         description: document.getElementById("event-description").value,
+        progress_status: document.getElementById("event-progress-status").value,
         resolution: document.getElementById("event-resolution").value,
         root_cause: document.getElementById("event-root-cause").value,
+
         processes: processes
     };
     
@@ -1825,9 +1922,11 @@ function renderEventView(data) {
         </div>
         <div class="event-view-card">
             <div class="event-view-section-title">进度结果</div>
-            <div class="event-view-desc"><strong>解决方案：</strong>${data.resolution || '暂无'}</div>
+            <div class="event-view-desc"><strong>处置进度：</strong>${data.progress_status || '未解决'}</div>
+            <div class="event-view-desc" style="margin-top:6px;"><strong>解决方案：</strong>${data.resolution || '暂无'}</div>
             <div class="event-view-desc" style="margin-top:6px;"><strong>根本原因：</strong>${data.root_cause || '未填写'}</div>
         </div>
+
         <div class="event-view-card compact">
             <div class="event-view-section-title">附件</div>
             ${attachments}
@@ -1871,12 +1970,18 @@ function searchEvents() {
 
 function resetEventFilters() {
     document.getElementById("event-system-name").value = "";
+    document.getElementById("event-title-filter").value = "";
     document.getElementById("event-start-date").value = "";
+
     document.getElementById("event-end-date").value = "";
     document.getElementById("event-type-filter").value = "";
     document.getElementById("event-status-filter").value = "";
     document.getElementById("event-severity-filter").value = "";
+    if (document.getElementById("event-progress-filter")) {
+        document.getElementById("event-progress-filter").value = "";
+    }
     loadEvents();
+
 }
 
 // ==================== 系统配置功能 ====================
@@ -2287,10 +2392,9 @@ const scheduleLabels = {
     daily: "每天",
     weekly: "每周",
     monthly: "每月",
-    quarterly: "每季度",
-    yearly: "每年",
     cron: "自定义Cron"
 };
+
 
 function getScheduleLabel(type) {
     return scheduleLabels[type] || type || "-";
@@ -2580,12 +2684,44 @@ function switchPlanTaskTab(view) {
 }
 
 function handlePlanTaskScheduleChange() {
-
     const select = document.getElementById("plan-task-schedule-type");
     const cronRow = document.getElementById("plan-task-cron-row");
-    if (!select || !cronRow) return;
+    const planTimeInput = document.getElementById("plan-task-plan-time");
+    const planTimeGroup = document.getElementById("plan-task-plan-time-group");
+    const weeklyRow = document.getElementById("plan-task-weekly-row");
+    const monthlyRow = document.getElementById("plan-task-monthly-row");
+    const planTimeLabel = document.getElementById("plan-task-plan-time-label");
+
+    if (!select || !cronRow || !planTimeInput) return;
+
+    // 控制各行的显示隐藏
     cronRow.style.display = select.value === 'cron' ? 'flex' : 'none';
+    weeklyRow.style.display = select.value === 'weekly' ? 'flex' : 'none';
+    monthlyRow.style.display = select.value === 'monthly' ? 'flex' : 'none';
+    
+    // Cron 模式下隐藏计划时间
+    planTimeGroup.style.display = select.value === 'cron' ? 'none' : 'flex';
+
+    // 根据周期类型切换时间选择器类型和标签
+    if (select.value === 'once') {
+        planTimeInput.type = 'datetime-local';
+        planTimeLabel.innerHTML = '计划执行时间 <span class="required">*</span>';
+        if (planTimeInput.value && planTimeInput.value.length === 5) {
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0];
+            planTimeInput.value = `${dateStr}T${planTimeInput.value}`;
+        }
+    } else {
+        // 每天、每周、每月，只选择具体时间点
+        planTimeLabel.innerHTML = '执行时间点 <span class="required">*</span>';
+        const currentValue = planTimeInput.value;
+        planTimeInput.type = 'time';
+        if (currentValue && currentValue.includes('T')) {
+            planTimeInput.value = currentValue.split('T')[1].substring(0, 5);
+        }
+    }
 }
+
 
 function setPreparationItems(items = []) {
     planTaskPreparations = items.map(item => ({
@@ -2721,8 +2857,27 @@ async function fillPlanTaskForm(taskId) {
             document.getElementById("plan-task-title").value = data.title || "";
             document.getElementById("plan-task-type").value = data.task_type || "其他";
             document.getElementById("plan-task-schedule-type").value = data.schedule_type || "once";
-            document.getElementById("plan-task-schedule-value").value = data.schedule_value || "";
-            document.getElementById("plan-task-plan-time").value = data.plan_time ? data.plan_time.replace(' ', 'T') : "";
+            
+            // 填充周/月执行日
+            if (data.schedule_type === 'weekly') {
+                document.getElementById("plan-task-weekly-day").value = data.schedule_value || "0";
+            } else if (data.schedule_type === 'monthly') {
+                document.getElementById("plan-task-monthly-day").value = data.schedule_value || "1";
+            } else if (data.schedule_type === 'cron') {
+                document.getElementById("plan-task-schedule-value").value = data.schedule_value || "";
+            }
+            
+            // 先应用周期变化逻辑，以确保 input 类型正确
+            handlePlanTaskScheduleChange();
+
+            
+            let planTimeValue = data.plan_time ? data.plan_time.replace(' ', 'T') : "";
+            if (data.schedule_type !== 'once' && data.schedule_type !== 'cron' && planTimeValue.includes('T')) {
+                // 如果是周期性任务且当前是日期时间格式，截取时间部分
+                planTimeValue = planTimeValue.split('T')[1].substring(0, 5);
+            }
+            document.getElementById("plan-task-plan-time").value = planTimeValue;
+
             document.getElementById("plan-task-webhook-cache").value = data.webhook_url || "";
             document.getElementById("plan-task-responsible").value = (data.responsible || []).join(',');
 
@@ -2733,12 +2888,8 @@ async function fillPlanTaskForm(taskId) {
             populateAlertRobotSelect(data.alert_robot || "");
             document.getElementById("plan-task-reminder-message").value = data.reminder_message || DEFAULT_REMINDER_TEMPLATE;
             document.getElementById("plan-task-description").value = data.description || "";
-            handlePlanTaskScheduleChange();
             setPreparationItems(data.preparations || []);
-
-
         }
-
     } catch (error) {
         console.error("加载任务详情失败:", error);
         showToast("加载任务详情失败", "error");
@@ -2750,13 +2901,41 @@ async function savePlanTask() {
     const selectedRobot = document.getElementById("plan-task-alert-robot")?.value || "";
     const cachedWebhook = document.getElementById("plan-task-webhook-cache")?.value || "";
     const webhookFromConfig = getAlertRobotWebhook(selectedRobot) || cachedWebhook;
-    const payload = {
+    
+    let planTime = document.getElementById("plan-task-plan-time").value;
+    const scheduleType = document.getElementById("plan-task-schedule-type").value;
+    let scheduleValue = "";
 
+    if (scheduleType === 'weekly') {
+        scheduleValue = document.getElementById("plan-task-weekly-day").value;
+    } else if (scheduleType === 'monthly') {
+        scheduleValue = document.getElementById("plan-task-monthly-day").value;
+    } else if (scheduleType === 'cron') {
+        scheduleValue = document.getElementById("plan-task-schedule-value").value.trim();
+    }
+    
+    // 如果是周期性任务且只选了时间，补全为当前的日期以便后端解析
+    if (planTime && planTime.length === 5 && scheduleType !== 'once') {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        planTime = `${year}-${month}-${day}T${planTime}`;
+    } else if (scheduleType === 'cron') {
+        // Cron 模式下 plan_time 可能为空，给个默认值（当前时间）以便后端不报错
+        if (!planTime) {
+            const now = new Date();
+            planTime = now.toISOString().slice(0, 16);
+        }
+    }
+
+    const payload = {
         title: document.getElementById("plan-task-title").value.trim(),
         task_type: document.getElementById("plan-task-type").value,
-        schedule_type: document.getElementById("plan-task-schedule-type").value,
-        schedule_value: document.getElementById("plan-task-schedule-value").value.trim(),
-        plan_time: document.getElementById("plan-task-plan-time").value,
+        schedule_type: scheduleType,
+        schedule_value: scheduleValue,
+        plan_time: planTime,
+
         responsible: document.getElementById("plan-task-responsible").value
             .split(',').map(item => item.trim()).filter(Boolean),
         owner: document.getElementById("plan-task-owner").value.trim(),
@@ -2777,13 +2956,11 @@ async function savePlanTask() {
         showToast("请填写任务标题", "warning");
         return;
     }
-    if (!payload.plan_time) {
+    if (!payload.plan_time && payload.schedule_type !== 'cron') {
         showToast("请选择计划执行时间", "warning");
         return;
     }
-    if (payload.schedule_type !== 'cron') {
-        payload.schedule_value = '';
-    }
+
     try {
         const method = id ? 'PUT' : 'POST';
         const url = id ? `${API_BASE}/plan-tasks/${id}` : `${API_BASE}/plan-tasks`;
@@ -3081,11 +3258,241 @@ window.resetPlanTaskFilters = resetPlanTaskFilters;
 window.switchPlanTaskTab = switchPlanTaskTab;
 window.showPlanTaskDialog = showPlanTaskDialog;
 window.closePlanTaskDialog = closePlanTaskDialog;
+let notificationAuditPage = 1;
+const notificationAuditPerPage = 15;
+let currentNotificationAudits = [];
+
+async function loadNotificationAudits(page = 1) {
+    notificationAuditPage = page;
+    const start = document.getElementById("audit-filter-start").value;
+    const end = document.getElementById("audit-filter-end").value;
+    const title = document.getElementById("audit-filter-title").value;
+    
+    let url = `${API_BASE}/notification-audits?page=${page}&per_page=${notificationAuditPerPage}`;
+    if (start) url += `&start_date=${start}`;
+    if (end) url += `&end_date=${end}`;
+    if (title) url += `&task_title=${encodeURIComponent(title)}`;
+    
+    try {
+        const response = await apiFetch(url);
+        const result = await response.json();
+        if (result.code === 0) {
+            currentNotificationAudits = result.data;
+            renderNotificationAuditTable(result.data);
+            renderAuditPagination(result.total, result.pages, result.current_page);
+        }
+    } catch (error) {
+        console.error("加载通知审计失败:", error);
+        showToast("加载通知审计失败", "error");
+    }
+}
+
+let selectedAuditIds = new Set();
+
+function renderNotificationAuditTable(data) {
+    const tbody = document.getElementById("audit-tbody");
+    if (!tbody) return;
+    
+    // 重置选择
+    selectedAuditIds.clear();
+    const selectAll = document.getElementById("audit-select-all");
+    if (selectAll) selectAll.checked = false;
+    updateBulkDeleteButton();
+
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 60px; color: #94a3b8;">暂无通知审计记录</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = data.map((audit, index) => {
+        const statusClass = audit.status === '成功' ? 'status-resolved' : 'status-unresolved';
+        return `
+            <tr style="cursor: pointer;" onclick="handleAuditRowClick(event, ${index})">
+                <td style="text-align: center;" onclick="event.stopPropagation()">
+                    <input type="checkbox" class="audit-checkbox" value="${audit.id}" onclick="toggleAuditSelection(this)">
+                </td>
+                <td style="font-family: 'Cascadia Code', monospace; color: #64748b; font-size: 13px;">${audit.sent_at}</td>
+                <td>
+                    <div style="font-weight: 600; color: #1e293b; margin-bottom: 2px;">${audit.task_title || '-'}</div>
+                    <div style="font-size: 11px; color: #94a3b8;">关联ID: ${audit.task_id || '测试通知'}</div>
+                </td>
+                <td>
+                    <div style="font-weight: 500; color: #334155; line-height: 1.4;">${audit.title || '-'}</div>
+                </td>
+                <td>
+                    <div style="color: #475569; font-size: 13px; font-weight: 500;">${audit.robot_name || '默认机器人'}</div>
+                    <div style="font-size: 11px; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;" title="${audit.webhook_url}">
+                        ${audit.webhook_url}
+                    </div>
+                </td>
+                <td>
+                    <span class="status-badge ${statusClass}" style="padding: 4px 12px; border-radius: 4px; font-weight: 500; font-size: 12px;">
+                        ${audit.status === '成功' ? '● 发送成功' : '● 发送失败'}
+                    </span>
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function handleAuditRowClick(event, index) {
+    // 如果点击的是 checkbox，不触发展开详情
+    if (event.target.type === 'checkbox' || event.target.closest('input[type="checkbox"]')) {
+        return;
+    }
+    showAuditDetail(index);
+}
+
+function toggleSelectAllAudits(checkbox) {
+    const checkboxes = document.querySelectorAll('.audit-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = checkbox.checked;
+        if (checkbox.checked) {
+            selectedAuditIds.add(cb.value);
+        } else {
+            selectedAuditIds.delete(cb.value);
+        }
+    });
+    updateBulkDeleteButton();
+}
+
+function toggleAuditSelection(checkbox) {
+    if (checkbox.checked) {
+        selectedAuditIds.add(checkbox.value);
+    } else {
+        selectedAuditIds.delete(checkbox.value);
+    }
+    
+    // 更新全选状态
+    const selectAll = document.getElementById("audit-select-all");
+    const checkboxes = document.querySelectorAll('.audit-checkbox');
+    selectAll.checked = Array.from(checkboxes).every(cb => cb.checked);
+    
+    updateBulkDeleteButton();
+}
+
+function updateBulkDeleteButton() {
+    const btn = document.getElementById("btn-bulk-delete");
+    if (!btn) return;
+    if (selectedAuditIds.size > 0) {
+        btn.style.display = "inline-block";
+        btn.textContent = `批量删除 (${selectedAuditIds.size})`;
+    } else {
+        btn.style.display = "none";
+    }
+}
+
+async function bulkDeleteAudits() {
+    if (selectedAuditIds.size === 0) return;
+    
+    if (!confirm(`确定要删除选中的 ${selectedAuditIds.size} 条审计记录吗？此操作不可撤销。`)) {
+        return;
+    }
+    
+    try {
+        const response = await apiFetch(`${API_BASE}/notification-audits/bulk-delete`, {
+            method: 'POST',
+            body: JSON.stringify({
+                ids: Array.from(selectedAuditIds)
+            })
+        });
+        const result = await response.json();
+        if (result.code === 0) {
+            showToast(result.message, "success");
+            loadNotificationAudits(notificationAuditPage);
+        } else {
+            showToast(result.message, "error");
+        }
+    } catch (error) {
+        console.error("批量删除失败:", error);
+        showToast("操作失败，请重试", "error");
+    }
+}
+
+function renderAuditPagination(total, pages, current) {
+    const container = document.getElementById("audit-pagination");
+    if (!container) return;
+    
+    let html = `
+        <span class="pagination-info">共计 ${total} 条, 当前第 ${current} / ${pages} 页</span>
+        <div class="pagination-controls">
+    `;
+    
+    // 上一页
+    html += `<button class="btn-pagination" ${current <= 1 ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''} onclick="loadNotificationAudits(${current - 1})"><</button>`;
+    
+    // 页码逻辑
+    const maxVisible = 5;
+    let start = Math.max(1, current - 2);
+    let end = Math.min(pages, start + maxVisible - 1);
+    if (end - start < maxVisible - 1) {
+        start = Math.max(1, end - maxVisible + 1);
+    }
+    
+    for (let i = start; i <= end; i++) {
+        html += `<button class="btn-pagination ${i === current ? 'active' : ''}" onclick="loadNotificationAudits(${i})">${i}</button>`;
+    }
+    
+    // 下一页
+    html += `<button class="btn-pagination" ${current >= pages ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''} onclick="loadNotificationAudits(${current + 1})">></button>`;
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function resetAuditFilters() {
+    document.getElementById("audit-filter-start").value = "";
+    document.getElementById("audit-filter-end").value = "";
+    document.getElementById("audit-filter-title").value = "";
+    loadNotificationAudits(1);
+}
+
+function showAuditDetail(index) {
+    try {
+        const audit = currentNotificationAudits[index];
+        if (!audit) return;
+        
+        document.getElementById("audit-detail-time").textContent = audit.sent_at;
+        document.getElementById("audit-detail-task").textContent = audit.task_title || "未关联任务";
+        document.getElementById("audit-detail-robot").textContent = audit.robot_name || "默认机器人";
+        
+        const statusEl = document.getElementById("audit-detail-status");
+        statusEl.textContent = audit.status;
+        statusEl.className = audit.status === '成功' ? 'status-badge status-resolved' : 'status-badge status-unresolved';
+        statusEl.style.display = "inline-block";
+        
+        const errorContainer = document.getElementById("audit-detail-error-container");
+        if (audit.status === '失败' && audit.error_msg) {
+            document.getElementById("audit-detail-error").textContent = audit.error_msg;
+            errorContainer.style.display = "block";
+        } else {
+            errorContainer.style.display = "none";
+        }
+        
+        document.getElementById("audit-detail-webhook").textContent = audit.webhook_url;
+        document.getElementById("audit-detail-content").textContent = audit.content;
+        
+        openModal("audit-detail-dialog");
+    } catch (e) {
+        console.error("解析审计详情失败:", e);
+        showToast("无法加载详情数据", "error");
+    }
+}
+
 window.addPreparationItem = addPreparationItem;
 window.removePreparationItem = removePreparationItem;
 window.savePlanTask = savePlanTask;
 window.testPlanTaskNotification = testPlanTaskNotification;
 window.deletePlanTask = deletePlanTask;
+window.loadNotificationAudits = loadNotificationAudits;
+window.resetAuditFilters = resetAuditFilters;
+window.showAuditDetail = showAuditDetail;
+window.toggleSelectAllAudits = toggleSelectAllAudits;
+window.toggleAuditSelection = toggleAuditSelection;
+window.bulkDeleteAudits = bulkDeleteAudits;
+window.handleAuditRowClick = handleAuditRowClick;
+
+
 
 window.editPlanTask = editPlanTask;
 window.viewPlanTaskDetail = viewPlanTaskDetail;

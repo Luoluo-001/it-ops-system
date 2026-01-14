@@ -25,7 +25,8 @@ cd /d "c:\Users\yunding\Desktop\coding\it-ops-system"
 echo.
 echo ========================================
 echo 系统启动中...
-echo 访问地址: http://localhost:5000
+echo 访问地址: http://localhost:5001
+
 echo 用户名: admin
 echo 密码: Flzx3qc@2024
 echo ========================================
