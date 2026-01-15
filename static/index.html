@@ -735,8 +735,57 @@
                             <input type="text" id="system-name" required />
                         </div>
                         <div class="form-group">
+                            <label>系统状态</label>
+                            <select id="system-status">
+                                <option value="运行中">运行中</option>
+                                <option value="维护中">维护中</option>
+                                <option value="已停用">已停用</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
                             <label>系统编码</label>
                             <input type="text" id="system-code" placeholder="CORE-SYS" />
+                        </div>
+                    </div>
+
+                    
+                    <div class="form-section-title">管理信息</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>管理部室</label>
+                            <select id="system-department">
+                                <option value="">请选择</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>建设单位</label>
+                            <input type="text" id="system-construction-unit" placeholder="请输入建设单位名称" />
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label>系统描述</label>
+                            <textarea id="system-description" rows="3" placeholder="核心业务系统,承载主要业务流程..."></textarea>
+                        </div>
+                    </div>
+                    <div class="form-section-title">联系信息</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>负责人</label>
+                            <input type="text" id="system-contact-person" placeholder="张三" />
+                        </div>
+                        <div class="form-group">
+                            <label>联系电话</label>
+                            <input type="text" id="system-contact-phone" placeholder="13800138000" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>电子邮箱</label>
+                            <input type="email" id="system-contact-email" placeholder="zhangsan@example.com" />
                         </div>
                     </div>
                     
@@ -765,47 +814,14 @@
                         <!-- 动态添加中间件 -->
                     </div>
                     <button type="button" class="btn btn-text" onclick="addMiddlewareRow()">+ 添加中间件</button>
-                    
-                    <div class="form-section-title">管理信息</div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>管理部室</label>
-                            <select id="system-department">
-                                <option value="">请选择</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>系统状态</label>
-                            <select id="system-status">
-                                <option value="运行中">运行中</option>
-                                <option value="维护中">维护中</option>
-                                <option value="已停用">已停用</option>
-                            </select>
-                        </div>
+
+                    <div class="form-section-title">上下游关联系统</div>
+                    <div id="integrations-list">
+                        <!-- 动态添加关联系统 -->
                     </div>
-                    <div class="form-row">
-                        <div class="form-group full-width">
-                            <label>系统描述</label>
-                            <textarea id="system-description" rows="3" placeholder="核心业务系统,承载主要业务流程..."></textarea>
-                        </div>
-                    </div>
-                    <div class="form-section-title">联系信息</div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>负责人</label>
-                            <input type="text" id="system-contact-person" placeholder="张三" />
-                        </div>
-                        <div class="form-group">
-                            <label>联系电话</label>
-                            <input type="text" id="system-contact-phone" placeholder="13800138000" />
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>电子邮箱</label>
-                            <input type="email" id="system-contact-email" placeholder="zhangsan@example.com" />
-                        </div>
-                    </div>
+                    <button type="button" class="btn btn-text" onclick="addIntegrationRow()">+ 添加关联系统</button>
+
+
                 </form>
             </div>
             <div class="modal-footer">
@@ -1348,35 +1364,19 @@
             </div>
         </div>
     </div>
-    <!-- 页面切换过度动画 -->
+    <!-- 页面切换过渡动画 -->
     <div id="page-transition" class="page-transition-overlay">
-        <div class="luxury-hourglass">
-            <div class="glass-container">
-                <div class="glass-top">
-                    <div class="sand-top"></div>
-                </div>
-                <div class="glass-mid">
-                    <div class="sand-stream"></div>
-                </div>
-                <div class="glass-bottom">
-                    <div class="sand-bottom"></div>
-                </div>
+        <div class="transition-card">
+            <div class="transition-spinner">
+                <div class="transition-ring"></div>
+                <div class="transition-ring blur"></div>
+                <div class="transition-dot"></div>
             </div>
-            <div class="gold-frame">
-                <div class="cap top"></div>
-                <div class="pillar left"></div>
-                <div class="pillar right"></div>
-                <div class="cap bottom"></div>
+            <div class="transition-text">
+                <span>页面加载中</span>
+                <span class="sub">正在切换视图，请稍候…</span>
             </div>
         </div>
     </div>
-
-
-
-
-
-
-
 </body>
-
 </html>

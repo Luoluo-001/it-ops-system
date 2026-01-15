@@ -1,6 +1,7 @@
 # IT运维管理系统 - Linux打包脚本
 
-$PackageName = "it-ops-system-linux-v1.3"
+$PackageName = "it-ops-system-linux-v1.4"
+
 $SourceDir = "."
 $TempDir = "temp_package"
 

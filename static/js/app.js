@@ -30,6 +30,8 @@ let processStepCounter = 0;
 let eventAttachments = [];
 let hostCounter = 0;
 let middlewareCounter = 0;
+let integrationCounter = 0;
+
 let currentConfigKey = null;
 let configCache = {};
 let editingRobotName = null;
@@ -1070,8 +1072,11 @@ function showSystemDialog(systemId = null) {
         document.getElementById("system-id").value = "";
         document.getElementById("hosts-list").innerHTML = "";
         document.getElementById("middlewares-list").innerHTML = "";
+        document.getElementById("integrations-list").innerHTML = "";
         hostCounter = 0;
         middlewareCounter = 0;
+        integrationCounter = 0;
+
         // 默认添加一个主机和一个中间件
         addHostRow();
         addMiddlewareRow();
@@ -1103,7 +1108,9 @@ async function loadSystemData(systemId) {
                 document.getElementById("system-contact-person").value = system.contact_person || "";
                 document.getElementById("system-contact-phone").value = system.contact_phone || "";
                 document.getElementById("system-contact-email").value = system.contact_email || "";
-                document.getElementById("system-status").value = system.status || "正常";
+                document.getElementById("system-status").value = system.status || "运行中";
+                document.getElementById("system-construction-unit").value = system.construction_unit || "";
+
                 
                 // 加载主机信息
                 const hostsList = document.getElementById("hosts-list");
@@ -1236,6 +1243,52 @@ function removeMiddlewareRow(mwId) {
     }
 }
 
+function addIntegrationRow(intData = null) {
+    integrationCounter++;
+    const intList = document.getElementById("integrations-list");
+    
+    const intDiv = document.createElement("div");
+    intDiv.className = "integration-row";
+    intDiv.setAttribute("data-int-id", integrationCounter);
+    
+    intDiv.innerHTML = `
+        <span class="row-remove" onclick="removeIntegrationRow(${integrationCounter})">×</span>
+        <div class="form-row">
+            <div class="form-group">
+                <label>关联类型</label>
+                <select class="integration-type">
+                    <option value="upstream" ${intData && intData.integration_type === 'upstream' ? "selected" : ""}>上游系统</option>
+                    <option value="downstream" ${intData && intData.integration_type === 'downstream' ? "selected" : ""}>下游系统</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>系统名称</label>
+                <input type="text" class="remote-system-name" placeholder="请输入系统名称" value="${intData?.remote_system_name || ""}" />
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label>网络环境</label>
+                <select class="network-type">
+                    <option value="internal" ${intData && intData.network_type === 'internal' ? "selected" : ""}>内网</option>
+                    <option value="external" ${intData && intData.network_type === 'external' ? "selected" : ""}>外网</option>
+                </select>
+            </div>
+        </div>
+    `;
+    
+    intList.appendChild(intDiv);
+}
+
+function removeIntegrationRow(intId) {
+    const row = document.querySelector(`[data-int-id="${intId}"]`);
+    if (row) {
+        row.remove();
+    }
+}
+
+
 async function saveSystem() {
     const systemId = document.getElementById("system-id").value;
     const systemName = document.getElementById("system-name").value.trim();
@@ -1283,6 +1336,22 @@ async function saveSystem() {
             });
         }
     });
+
+    // 收集关联信息
+    const integrations = [];
+    document.querySelectorAll(".integration-row").forEach(row => {
+        const integrationType = row.querySelector(".integration-type").value;
+        const remoteSystemName = row.querySelector(".remote-system-name").value.trim();
+        const networkType = row.querySelector(".network-type").value;
+        if (remoteSystemName) {
+            integrations.push({
+                integration_type: integrationType,
+                remote_system_name: remoteSystemName,
+                network_type: networkType
+            });
+        }
+    });
+
     
     const data = {
         system_name: document.getElementById("system-name").value,
@@ -1290,14 +1359,17 @@ async function saveSystem() {
         database: document.getElementById("system-database").value,
         database_version: document.getElementById("system-database-version").value,
         department: document.getElementById("system-department").value,
+        construction_unit: document.getElementById("system-construction-unit").value,
         status: document.getElementById("system-status").value,
         description: document.getElementById("system-description").value,
         contact_person: document.getElementById("system-contact-person").value,
         contact_phone: document.getElementById("system-contact-phone").value,
         contact_email: document.getElementById("system-contact-email").value,
         hosts: hosts,
-        middlewares: middlewares
+        middlewares: middlewares,
+        integrations: integrations
     };
+
     
     try {
         const url = systemId ? `${API_BASE}/business-systems/${systemId}` : `${API_BASE}/business-systems`;
@@ -1359,7 +1431,60 @@ function renderSystemView(data) {
 
     titleEl.textContent = data.system_name || '业务系统详情';
 
+    const upstreams = (data.integrations || []).filter(i => i.integration_type === 'upstream');
+    const downstreams = (data.integrations || []).filter(i => i.integration_type === 'downstream');
+
+    const topoHtml = `
+        <div class="topo-visual-wrapper" style="padding: 20px 10px; background: #fdfeff; border-radius: 12px; position: relative; min-height: 200px; display: flex; align-items: center; justify-content: center; gap: 60px; overflow-x: auto;">
+            <!-- 上游系统组 -->
+            <div class="topo-group upstream" style="display: flex; flex-direction: column; gap: 12px; align-items: flex-end;">
+                <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-bottom: 4px; padding-right: 10px;">上游关联系统</div>
+                ${upstreams.length > 0 ? upstreams.map(i => `
+                    <div class="topo-card" style="padding: 10px 16px; background: #fff; border: 1px solid ${i.network_type === 'internal' ? '#e2e8f0' : '#fed7aa'}; border-left: 4px solid ${i.network_type === 'internal' ? '#6366f1' : '#f59e0b'}; border-radius: 6px; min-width: 160px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); position: relative;">
+                        <div style="font-weight: 600; color: #1e293b; font-size: 13px;">${i.remote_system_name}</div>
+                        <div style="font-size: 10px; color: ${i.network_type === 'internal' ? '#6366f1' : '#f59e0b'}; margin-top: 2px; display: flex; align-items: center; gap: 4px;">
+                            <span style="width: 6px; height: 6px; border-radius: 50%; background: currentColor;"></span>
+                            ${i.network_type === 'internal' ? '内网访问' : '外网接入'}
+                        </div>
+                        <!-- 连接线 -->
+                        <div style="position: absolute; right: -40px; top: 50%; width: 40px; height: 1px; background: linear-gradient(to right, ${i.network_type === 'internal' ? '#6366f133' : '#f59e0b33'}, #cbd5e1); z-index: 0;"></div>
+                        <div style="position: absolute; right: -40px; top: 50%; transform: translateY(-50%); font-size: 12px; color: #cbd5e1; right: -35px;">▶</div>
+                    </div>
+                `).join('') : '<div style="font-size: 12px; color: #cbd5e1; padding: 10px 20px; border: 1px dashed #e2e8f0; border-radius: 6px;">无上游关联</div>'}
+            </div>
+
+            <!-- 中心当前系统 -->
+            <div class="topo-center" style="position: relative; z-index: 2;">
+                <div style="padding: 24px 30px; background: linear-gradient(135deg, #4f46e5, #6366f1); color: #fff; border-radius: 16px; text-align: center; box-shadow: 0 20px 25px -5px rgba(79, 70, 229, 0.2), 0 10px 10px -5px rgba(79, 70, 229, 0.1); border: 4px solid rgba(255,255,255,0.2); min-width: 180px;">
+                    <div style="font-size: 10px; opacity: 0.8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Current System</div>
+                    <div style="font-weight: 800; font-size: 16px; letter-spacing: -0.025em;">${data.system_name}</div>
+                    <div style="display: inline-block; margin-top: 8px; padding: 2px 8px; background: rgba(255,255,255,0.2); border-radius: 99px; font-size: 10px;">${data.system_code || 'N/A'}</div>
+                </div>
+            </div>
+
+            <!-- 下游系统组 -->
+            <div class="topo-group downstream" style="display: flex; flex-direction: column; gap: 12px; align-items: flex-start;">
+                <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-bottom: 4px; padding-left: 10px;">下游关联系统</div>
+                ${downstreams.length > 0 ? downstreams.map(i => `
+                    <div class="topo-card" style="padding: 10px 16px; background: #fff; border: 1px solid ${i.network_type === 'internal' ? '#e2e8f0' : '#fed7aa'}; border-left: 4px solid ${i.network_type === 'internal' ? '#6366f1' : '#f59e0b'}; border-radius: 6px; min-width: 160px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); position: relative;">
+                        <!-- 连接线 -->
+                        <div style="position: absolute; left: -40px; top: 50%; width: 40px; height: 1px; background: linear-gradient(to left, ${i.network_type === 'internal' ? '#6366f133' : '#f59e0b33'}, #cbd5e1); z-index: 0;"></div>
+                        <div style="position: absolute; left: -40px; top: 50%; transform: translateY(-50%); font-size: 12px; color: #cbd5e1; left: -38px;">▶</div>
+                        <div style="font-weight: 600; color: #1e293b; font-size: 13px;">${i.remote_system_name}</div>
+                        <div style="font-size: 10px; color: ${i.network_type === 'internal' ? '#6366f1' : '#f59e0b'}; margin-top: 2px; display: flex; align-items: center; gap: 4px;">
+                            <span style="width: 6px; height: 6px; border-radius: 50%; background: currentColor;"></span>
+                            ${i.network_type === 'internal' ? '内网下发' : '外网推送'}
+                        </div>
+                    </div>
+                `).join('') : '<div style="font-size: 12px; color: #cbd5e1; padding: 10px 20px; border: 1px dashed #e2e8f0; border-radius: 6px;">无下游关联</div>'}
+            </div>
+        </div>
+    `;
+
+
+
     const hosts = (data.hosts || []).map(h => `
+
         <div class="host-glass-card">
             <div style="font-weight: 700; color: #1e293b; margin-bottom: 6px; display: flex; justify-content: space-between;">
                 <span>${h.ip_address || '-'}</span>
@@ -1368,6 +1493,7 @@ function renderSystemView(data) {
             <div style="font-size: 12px; color: #64748b; line-height: 1.5;">
                 <div>系统: ${h.os_version || '-'}</div>
                 <div>配置: ${h.cpu_cores || '-'}核 / ${h.memory_gb || '-'}GB / ${h.disk_gb || '-'}GB</div>
+                ${h.host_purpose ? `<div style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed #e2e8f0; color: #1e293b; font-weight: 700;">用途: ${h.host_purpose}</div>` : ''}
             </div>
         </div>
     `).join("") || '<div class="event-view-desc" style="grid-column: 1/-1;">暂无主机信息</div>';
@@ -1392,10 +1518,14 @@ function renderSystemView(data) {
                     <div class="event-view-meta" style="grid-template-columns: repeat(2, 1fr); gap: 12px;">
                         <span>系统编码：${data.system_code || '-'}</span>
                         <span>管理部室：${data.department || '-'}</span>
+                        <span>建设单位：${data.construction_unit || '-'}</span>
                         <span>负责人：${data.contact_person || '-'}</span>
+
                         <span>联系电话：${data.contact_phone || '-'}</span>
                     </div>
                     <div class="event-view-section-title" style="margin-top:16px;">系统描述</div>
+
+
                     <div class="event-view-desc" style="background: #f8fafc; padding: 10px; border-radius: 8px;">${data.description || '暂无描述'}</div>
                 </div>
             </div>
@@ -1434,7 +1564,16 @@ function renderSystemView(data) {
                     </div>
                 </div>
             </div>
+
+            <!-- 下方关联拓扑（单独块） -->
+            <div class="system-view-bottom" style="margin-top: 16px;">
+                <div class="system-view-card">
+                    <div class="event-view-section-title">关联关系拓扑图</div>
+                    ${topoHtml}
+                </div>
+            </div>
         </div>
+
     `;
 }
 

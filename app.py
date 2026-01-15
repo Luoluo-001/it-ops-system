@@ -73,14 +73,17 @@ class BusinessSystem(db.Model):
     contact_person = db.Column(db.String(50))  # 负责人
     contact_phone = db.Column(db.String(20))  # 联系电话
     contact_email = db.Column(db.String(100))  # 联系邮箱
+    construction_unit = db.Column(db.String(200))  # 建设单位
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     events = db.relationship('Event', backref='business_system', lazy=True)
     hosts = db.relationship('SystemHost', backref='business_system', lazy=True, cascade='all, delete-orphan')
     middlewares = db.relationship('SystemMiddleware', backref='business_system', lazy=True, cascade='all, delete-orphan')
+    integrations = db.relationship('SystemIntegration', backref='business_system', lazy=True, cascade='all, delete-orphan')
 
 class SystemHost(db.Model):
+
     """系统主机表"""
     id = db.Column(db.Integer, primary_key=True)
     system_id = db.Column(db.Integer, db.ForeignKey('business_system.id'), nullable=False)
@@ -102,7 +105,17 @@ class SystemMiddleware(db.Model):
     quantity = db.Column(db.Integer, default=1)  # 数量
     created_at = db.Column(db.DateTime, default=datetime.now)
 
+class SystemIntegration(db.Model):
+    """系统集成关系表"""
+    id = db.Column(db.Integer, primary_key=True)
+    system_id = db.Column(db.Integer, db.ForeignKey('business_system.id'), nullable=False)
+    integration_type = db.Column(db.String(20))  # upstream (上游) / downstream (下游)
+    remote_system_name = db.Column(db.String(100), nullable=False)  # 关联系统名称
+    network_type = db.Column(db.String(20))  # internal (内网) / external (外网)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
 class Event(db.Model):
+
     """运维事件表"""
     id = db.Column(db.Integer, primary_key=True)
     event_no = db.Column(db.String(50), unique=True, nullable=False)  # 事件编号
@@ -255,6 +268,9 @@ def ensure_plan_task_schema():
             PlanTaskPreparation.__table__.create(db.engine, checkfirst=True)
         if 'notification_audit' not in table_names:
             NotificationAudit.__table__.create(db.engine, checkfirst=True)
+        if 'system_integration' not in table_names:
+            SystemIntegration.__table__.create(db.engine, checkfirst=True)
+
 
 
         # 补齐 plan_task 缺失字段
@@ -318,6 +334,12 @@ def ensure_plan_task_schema():
                 with db.engine.begin() as conn:
                     conn.exec_driver_sql(f"ALTER TABLE event_process ADD COLUMN {col} {ddl}")
 
+        # 补齐 business_system 缺失字段
+        system_cols = {col['name'] for col in inspector.get_columns('business_system')}
+        if 'construction_unit' not in system_cols:
+            with db.engine.begin() as conn:
+                conn.exec_driver_sql("ALTER TABLE business_system ADD COLUMN construction_unit VARCHAR(200)")
+
 
 
 
@@ -336,7 +358,14 @@ def bootstrap_schema():
 
 app.before_request(bootstrap_schema)
 
+# 模块加载时先执行一次以避免首个请求前的查询因缺列报错
+try:
+    bootstrap_schema()
+except Exception as e:
+    print(f"[schema bootstrap warning] {e}")
+
 # 在应用启动时立即开启后台线程
+
 def start_background_worker():
     # 避免在 Flask debug 模式下启动两次
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
@@ -906,6 +935,8 @@ def get_business_systems():
                 'contact_person': sys.contact_person,
                 'contact_phone': sys.contact_phone,
                 'contact_email': sys.contact_email,
+                'construction_unit': sys.construction_unit,
+
                 'hosts': [{
                     'id': h.id,
                     'host_type': h.host_type,
@@ -922,7 +953,14 @@ def get_business_systems():
                     'middleware_version': m.middleware_version,
                     'quantity': m.quantity
                 } for m in sys.middlewares],
+                'integrations': [{
+                    'id': i.id,
+                    'integration_type': i.integration_type,
+                    'remote_system_name': i.remote_system_name,
+                    'network_type': i.network_type
+                } for i in sys.integrations],
                 'created_at': sys.created_at.strftime('%Y-%m-%d %H:%M:%S') if sys.created_at else None
+
             } for sys in pagination.items],
             'total': pagination.total,
             'page': page,
@@ -955,10 +993,11 @@ def export_business_systems():
     
     # 定义表头
     headers = [
-        "系统名称", "系统代码", "状态", "管理部室", "部室状态", 
+        "系统名称", "系统代码", "状态", "建设单位", "管理部室", "部室状态", 
         "数据库类型", "数据库版本", "负责人", "联系电话", "联系邮箱", 
         "系统描述", "主机信息", "中间件信息", "创建时间"
     ]
+
     
     # 设置样式
     header_font = Font(bold=True, color="FFFFFF")
@@ -988,20 +1027,22 @@ def export_business_systems():
         ws.cell(row=row, column=1, value=sys.system_name)
         ws.cell(row=row, column=2, value=sys.system_code)
         ws.cell(row=row, column=3, value=sys.status)
-        ws.cell(row=row, column=4, value=sys.department)
-        ws.cell(row=row, column=5, value=sys.department_status)
-        ws.cell(row=row, column=6, value=sys.database)
-        ws.cell(row=row, column=7, value=sys.database_version)
-        ws.cell(row=row, column=8, value=sys.contact_person)
-        ws.cell(row=row, column=9, value=sys.contact_phone)
-        ws.cell(row=row, column=10, value=sys.contact_email)
-        ws.cell(row=row, column=11, value=sys.description)
-        ws.cell(row=row, column=12, value=hosts_str).alignment = Alignment(wrap_text=True)
-        ws.cell(row=row, column=13, value=mws_str).alignment = Alignment(wrap_text=True)
-        ws.cell(row=row, column=14, value=sys.created_at.strftime('%Y-%m-%d %H:%M:%S') if sys.created_at else "")
+        ws.cell(row=row, column=4, value=sys.construction_unit)
+        ws.cell(row=row, column=5, value=sys.department)
+        ws.cell(row=row, column=6, value=sys.department_status)
+        ws.cell(row=row, column=7, value=sys.database)
+        ws.cell(row=row, column=8, value=sys.database_version)
+        ws.cell(row=row, column=9, value=sys.contact_person)
+        ws.cell(row=row, column=10, value=sys.contact_phone)
+        ws.cell(row=row, column=11, value=sys.contact_email)
+        ws.cell(row=row, column=12, value=sys.description)
+        ws.cell(row=row, column=13, value=hosts_str).alignment = Alignment(wrap_text=True)
+        ws.cell(row=row, column=14, value=mws_str).alignment = Alignment(wrap_text=True)
+        ws.cell(row=row, column=15, value=sys.created_at.strftime('%Y-%m-%d %H:%M:%S') if sys.created_at else "")
         
     # 设置列宽
-    column_widths = [25, 15, 10, 20, 15, 15, 15, 15, 15, 20, 30, 50, 40, 20]
+    column_widths = [25, 15, 10, 20, 20, 15, 15, 15, 15, 15, 20, 30, 50, 40, 20]
+
     for i, width in enumerate(column_widths, 1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = width
 
@@ -1041,7 +1082,8 @@ def create_business_system():
         description=data.get('description'),
         contact_person=data.get('contact_person'),
         contact_phone=data.get('contact_phone'),
-        contact_email=data.get('contact_email')
+        contact_email=data.get('contact_email'),
+        construction_unit=data.get('construction_unit')
     )
     
     db.session.add(system)
@@ -1072,10 +1114,22 @@ def create_business_system():
                 quantity=mw_data.get('quantity', 1)
             )
             db.session.add(middleware)
+
+    # 添加集成信息（上/下游关联系统）
+    if 'integrations' in data:
+        for int_data in data['integrations']:
+            integration = SystemIntegration(
+                system_id=system.id,
+                integration_type=int_data.get('integration_type'),
+                remote_system_name=int_data.get('remote_system_name'),
+                network_type=int_data.get('network_type')
+            )
+            db.session.add(integration)
     
     db.session.commit()
     
     return jsonify({'code': 0, 'message': '创建成功', 'data': {'id': system.id}})
+
 
 
 @app.route('/api/business-systems/<int:id>', methods=['PUT'])
@@ -1101,6 +1155,8 @@ def update_business_system(id):
     system.contact_person = data.get('contact_person')
     system.contact_phone = data.get('contact_phone')
     system.contact_email = data.get('contact_email')
+    system.construction_unit = data.get('construction_unit')
+
     
     # 删除旧的主机信息
     SystemHost.query.filter_by(system_id=system.id).delete()
@@ -1134,9 +1190,24 @@ def update_business_system(id):
             )
             db.session.add(middleware)
     
+    # 删除旧的集成信息
+    SystemIntegration.query.filter_by(system_id=system.id).delete()
+    
+    # 添加新的集成信息
+    if 'integrations' in data:
+        for int_data in data['integrations']:
+            integration = SystemIntegration(
+                system_id=system.id,
+                integration_type=int_data.get('integration_type'),
+                remote_system_name=int_data.get('remote_system_name'),
+                network_type=int_data.get('network_type')
+            )
+            db.session.add(integration)
+    
     db.session.commit()
     
     return jsonify({'code': 0, 'message': '更新成功'})
+
 
 @app.route('/api/business-systems/<int:id>', methods=['DELETE'])
 @login_required
