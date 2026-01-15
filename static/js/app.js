@@ -1131,6 +1131,16 @@ async function loadSystemData(systemId) {
                 } else {
                     addMiddlewareRow();
                 }
+
+                // 加载上下游集成信息
+                const intList = document.getElementById("integrations-list");
+                intList.innerHTML = "";
+                integrationCounter = 0;
+                if (system.integrations && system.integrations.length > 0) {
+                    system.integrations.forEach(intg => addIntegrationRow(intg));
+                } else {
+                    addIntegrationRow();
+                }
             }
         }
     } catch (error) {
@@ -1138,6 +1148,7 @@ async function loadSystemData(systemId) {
         showToast("加载系统数据失败", "error");
     }
 }
+
 
 function addHostRow(hostData = null) {
     hostCounter++;
