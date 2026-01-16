@@ -971,7 +971,6 @@ function renderBusinessSystemsTable(systems) {
     if (selectAll) selectAll.checked = false;
 
     tbody.innerHTML = systems.map(sys => {
-        // ... (保持原有逻辑)
         const ipList = (sys.hosts || []).map(h => 
             `<span class="pill pill-soft" style="font-size: 11px; margin: 2px; padding: 2px 6px; background: rgba(99, 102, 241, 0.1); color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.2);">${h.ip_address || "-"}</span>`
         ).join("");
@@ -1100,7 +1099,6 @@ async function loadSystemData(systemId) {
             if (system) {
                 document.getElementById("system-id").value = system.id;
                 document.getElementById("system-name").value = system.system_name;
-                document.getElementById("system-code").value = system.system_code || "";
                 document.getElementById("system-database").value = system.database || "";
                 document.getElementById("system-database-version").value = system.database_version || "";
                 document.getElementById("system-department").value = system.department || "";
@@ -1110,6 +1108,9 @@ async function loadSystemData(systemId) {
                 document.getElementById("system-contact-email").value = system.contact_email || "";
                 document.getElementById("system-status").value = system.status || "运行中";
                 document.getElementById("system-construction-unit").value = system.construction_unit || "";
+                document.getElementById("system-location").value = system.location || "";
+                document.getElementById("system-access-url").value = system.access_url || "";
+
 
                 
                 // 加载主机信息
@@ -1183,6 +1184,16 @@ function addHostRow(hostData = null) {
                 <input type="text" class="host-os" placeholder="CentOS 7.9 / Windows 2016" value="${hostData?.os_version || ""}" />
             </div>
             <div class="form-group">
+                <label>CPU架构</label>
+                <select class="host-cpu-arch">
+                    <option value="X86" ${hostData?.cpu_arch === 'X86' ? 'selected' : ''}>X86</option>
+                    <option value="C86" ${hostData?.cpu_arch === 'C86' ? 'selected' : ''}>C86</option>
+                    <option value="ARM" ${hostData?.cpu_arch === 'ARM' ? 'selected' : ''}>ARM</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
                 <label>配置 (CPU/内存/磁盘)</label>
                 <div style="display: flex; gap: 4px;">
                     <input type="text" class="host-cpu" style="width: 30%;" placeholder="核数" value="${hostData?.cpu_cores || ""}" />
@@ -1190,9 +1201,7 @@ function addHostRow(hostData = null) {
                     <input type="text" class="host-disk" style="width: 35%;" placeholder="磁盘(GB)" value="${hostData?.disk_gb || ""}" />
                 </div>
             </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group full-width">
+            <div class="form-group">
                 <label>主机用途</label>
                 <input type="text" class="host-purpose" placeholder="应用服务器、数据库服务器等" value="${hostData?.host_purpose || ""}" />
             </div>
@@ -1320,6 +1329,7 @@ async function saveSystem() {
         const cpuCores = row.querySelector(".host-cpu").value;
         const memoryGb = row.querySelector(".host-mem").value;
         const diskGb = row.querySelector(".host-disk").value;
+        const cpuArch = row.querySelector(".host-cpu-arch").value;
         if (hostType || ipAddress) {
             hosts.push({
                 host_type: hostType,
@@ -1328,9 +1338,11 @@ async function saveSystem() {
                 os_version: osVersion,
                 cpu_cores: cpuCores,
                 memory_gb: memoryGb,
-                disk_gb: diskGb
+                disk_gb: diskGb,
+                cpu_arch: cpuArch
             });
         }
+
     });
     
     // 收集中间件信息
@@ -1366,11 +1378,12 @@ async function saveSystem() {
     
     const data = {
         system_name: document.getElementById("system-name").value,
-        system_code: document.getElementById("system-code").value,
         database: document.getElementById("system-database").value,
         database_version: document.getElementById("system-database-version").value,
         department: document.getElementById("system-department").value,
         construction_unit: document.getElementById("system-construction-unit").value,
+        location: document.getElementById("system-location").value,
+        access_url: document.getElementById("system-access-url").value,
         status: document.getElementById("system-status").value,
         description: document.getElementById("system-description").value,
         contact_person: document.getElementById("system-contact-person").value,
@@ -1380,6 +1393,7 @@ async function saveSystem() {
         middlewares: middlewares,
         integrations: integrations
     };
+
 
     
     try {
@@ -1494,12 +1508,17 @@ function renderSystemView(data) {
 
 
 
-    const hosts = (data.hosts || []).map(h => `
-
+    const hosts = (data.hosts || []).map(h => {
+        const arch = h.cpu_arch || 'X86';
+        const archClass = `arch-${arch.toLowerCase()}`;
+        return `
         <div class="host-glass-card">
             <div style="font-weight: 700; color: #1e293b; margin-bottom: 6px; display: flex; justify-content: space-between;">
                 <span>${h.ip_address || '-'}</span>
-                <span class="event-view-badge primary" style="font-size: 10px;">${h.host_type || '主机'}</span>
+                <div>
+                    <span class="event-view-badge ${archClass}" style="font-size: 10px; margin-right: 4px; background: rgba(255,255,255,0.5);">${arch}</span>
+                    <span class="event-view-badge primary" style="font-size: 10px;">${h.host_type || '主机'}</span>
+                </div>
             </div>
             <div style="font-size: 12px; color: #64748b; line-height: 1.5;">
                 <div>系统: ${h.os_version || '-'}</div>
@@ -1507,7 +1526,8 @@ function renderSystemView(data) {
                 ${h.host_purpose ? `<div style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed #e2e8f0; color: #1e293b; font-weight: 700;">用途: ${h.host_purpose}</div>` : ''}
             </div>
         </div>
-    `).join("") || '<div class="event-view-desc" style="grid-column: 1/-1;">暂无主机信息</div>';
+        `;
+    }).join("") || '<div class="event-view-desc" style="grid-column: 1/-1;">暂无主机信息</div>';
 
     const middlewares = (data.middlewares || []).map(m => `
         <div class="event-view-desc" style="background: rgba(255, 255, 255, 0.5); padding: 8px; border-radius: 8px; margin-bottom: 8px; border: 1px solid rgba(226, 232, 240, 0.6);">
@@ -1527,8 +1547,10 @@ function renderSystemView(data) {
                         <span class="event-view-badge ${getStatusClass(data.status) === 'success' ? 'success' : getStatusClass(data.status) === 'danger' ? 'danger' : 'warn'}">${data.status}</span>
                     </div>
                     <div class="event-view-meta" style="grid-template-columns: repeat(2, 1fr); gap: 12px;">
-                        <span>系统编码：${data.system_code || '-'}</span>
+                        <span>所在位置：${data.location || '-'}</span>
+                        <span>访问地址：${data.access_url || '-'}</span>
                         <span>管理部室：${data.department || '-'}</span>
+
                         <span>建设单位：${data.construction_unit || '-'}</span>
                         <span>负责人：${data.contact_person || '-'}</span>
 

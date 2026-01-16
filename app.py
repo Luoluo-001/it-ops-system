@@ -74,7 +74,10 @@ class BusinessSystem(db.Model):
     contact_phone = db.Column(db.String(20))  # 联系电话
     contact_email = db.Column(db.String(100))  # 联系邮箱
     construction_unit = db.Column(db.String(200))  # 建设单位
+    location = db.Column(db.String(200))  # 所在位置
+    access_url = db.Column(db.String(500))  # 访问地址
     created_at = db.Column(db.DateTime, default=datetime.now)
+
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     events = db.relationship('Event', backref='business_system', lazy=True)
@@ -94,7 +97,9 @@ class SystemHost(db.Model):
     cpu_cores = db.Column(db.String(50))   # CPU核数
     memory_gb = db.Column(db.String(50))   # 内存GB
     disk_gb = db.Column(db.String(50))     # 磁盘GB
+    cpu_arch = db.Column(db.String(50))    # CPU架构
     created_at = db.Column(db.DateTime, default=datetime.now)
+
 
 class SystemMiddleware(db.Model):
     """系统中间件表"""
@@ -305,7 +310,8 @@ def ensure_plan_task_schema():
             'os_version': 'VARCHAR(100)',
             'cpu_cores': 'VARCHAR(50)',
             'memory_gb': 'VARCHAR(50)',
-            'disk_gb': 'VARCHAR(50)'
+            'disk_gb': 'VARCHAR(50)',
+            'cpu_arch': 'VARCHAR(50)'
         }
         for col, ddl in host_column_defs.items():
             if col not in host_cols:
@@ -313,6 +319,7 @@ def ensure_plan_task_schema():
                     conn.exec_driver_sql(f"ALTER TABLE system_host ADD COLUMN {col} {ddl}")
 
         # 补齐 event 缺失字段
+
         event_cols = {col['name'] for col in inspector.get_columns('event')}
         event_column_defs = {
             'progress_status': "VARCHAR(20) DEFAULT '未解决'",
@@ -339,6 +346,15 @@ def ensure_plan_task_schema():
         if 'construction_unit' not in system_cols:
             with db.engine.begin() as conn:
                 conn.exec_driver_sql("ALTER TABLE business_system ADD COLUMN construction_unit VARCHAR(200)")
+        
+        if 'location' not in system_cols:
+            with db.engine.begin() as conn:
+                conn.exec_driver_sql("ALTER TABLE business_system ADD COLUMN location VARCHAR(200)")
+        
+        if 'access_url' not in system_cols:
+            with db.engine.begin() as conn:
+                conn.exec_driver_sql("ALTER TABLE business_system ADD COLUMN access_url VARCHAR(500)")
+
 
 
 
@@ -589,9 +605,8 @@ def background_reminder_worker():
                                         f"👤 **主负责人**: {task.owner or '未指定'}\n\n" \
                                         f"👥 **责任人**: {task.responsible or '未指定'}\n\n" \
                                         f"📊 **当前进度**: `{prep_progress}`\n\n" \
-                                        f"📝 **准备事项**:\n\n{prep_text}\n\n" \
-                                        f"--- \n\n" \
-                                        f"💡 **提醒详情**:\n\n> {safe_message}"
+                                        f"📝 **准备事项**:\n\n{prep_text}\n\n"
+
 
                         
                         webhook_url = current_webhook
@@ -936,6 +951,8 @@ def get_business_systems():
                 'contact_phone': sys.contact_phone,
                 'contact_email': sys.contact_email,
                 'construction_unit': sys.construction_unit,
+                'location': sys.location,
+                'access_url': sys.access_url,
 
                 'hosts': [{
                     'id': h.id,
@@ -945,8 +962,10 @@ def get_business_systems():
                     'os_version': h.os_version,
                     'cpu_cores': h.cpu_cores,
                     'memory_gb': h.memory_gb,
-                    'disk_gb': h.disk_gb
+                    'disk_gb': h.disk_gb,
+                    'cpu_arch': h.cpu_arch
                 } for h in sys.hosts],
+
                 'middlewares': [{
                     'id': m.id,
                     'middleware_type': m.middleware_type,
@@ -1014,7 +1033,7 @@ def export_business_systems():
     for row, sys in enumerate(systems, 2):
         # 格式化主机信息
         hosts_str = "\n".join([
-            f"[{h.host_type}] {h.ip_address} ({h.os_version or '-'}, {h.cpu_cores or '-'}核/{h.memory_gb or '-'}GB/{h.disk_gb or '-'}GB)"
+            f"[{h.host_type}] {h.ip_address} ({h.os_version or '-'}, {h.cpu_arch or '-'}, {h.cpu_cores or '-'}核/{h.memory_gb or '-'}GB/{h.disk_gb or '-'}GB)"
             for h in sys.hosts
         ])
         
@@ -1083,8 +1102,11 @@ def create_business_system():
         contact_person=data.get('contact_person'),
         contact_phone=data.get('contact_phone'),
         contact_email=data.get('contact_email'),
-        construction_unit=data.get('construction_unit')
+        construction_unit=data.get('construction_unit'),
+        location=data.get('location'),
+        access_url=data.get('access_url')
     )
+
     
     db.session.add(system)
     db.session.flush()
@@ -1100,7 +1122,8 @@ def create_business_system():
                 os_version=host_data.get('os_version'),
                 cpu_cores=host_data.get('cpu_cores'),
                 memory_gb=host_data.get('memory_gb'),
-                disk_gb=host_data.get('disk_gb')
+                disk_gb=host_data.get('disk_gb'),
+                cpu_arch=host_data.get('cpu_arch')
             )
             db.session.add(host)
     
@@ -1156,6 +1179,9 @@ def update_business_system(id):
     system.contact_phone = data.get('contact_phone')
     system.contact_email = data.get('contact_email')
     system.construction_unit = data.get('construction_unit')
+    system.location = data.get('location')
+    system.access_url = data.get('access_url')
+
 
     
     # 删除旧的主机信息
@@ -1172,9 +1198,11 @@ def update_business_system(id):
                 os_version=host_data.get('os_version'),
                 cpu_cores=host_data.get('cpu_cores'),
                 memory_gb=host_data.get('memory_gb'),
-                disk_gb=host_data.get('disk_gb')
+                disk_gb=host_data.get('disk_gb'),
+                cpu_arch=host_data.get('cpu_arch')
             )
             db.session.add(host)
+
     
     # 删除旧的中间件信息
     SystemMiddleware.query.filter_by(system_id=system.id).delete()
@@ -1877,9 +1905,8 @@ def test_plan_task_notification():
                     f"👤 **主负责人**: {owner}\n\n" \
                     f"👥 **责任人**: {responsible}\n\n" \
                     f"📊 **当前进度**: `{prep_progress}`\n\n" \
-                    f"📝 **准备事项**:\n\n{prep_text}\n\n" \
-                    f"--- \n\n" \
-                    f"💡 **提醒详情**:\n\n> {safe_message}"
+                    f"📝 **准备事项**:\n\n{prep_text}\n\n"
+
 
 
     success, msg = send_dingtalk_notification(webhook_url, markdown_text, title=markdown_title)

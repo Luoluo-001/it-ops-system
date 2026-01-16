@@ -1279,6 +1279,12 @@ body::after {
 .event-view-badge.warn { background: #fff7ed; color: #c2410c; }
 .event-view-badge.danger { background: #fef2f2; color: #b91c1c; }
 .event-view-badge.success { background: #ecfdf3; color: #15803d; }
+.event-view-badge.info { background: #f1f5f9; color: #475569; }
+
+/* CPU 架构特定颜色 */
+.arch-x86 { color: #003a8c !important; font-weight: 700; }
+.arch-arm { color: #991b1b !important; font-weight: 700; }
+.arch-c86 { color: #135200 !important; font-weight: 700; }
 
 .event-view-desc {
     font-size: 13px;
